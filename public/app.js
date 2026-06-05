@@ -130,6 +130,7 @@ let isCameraActive = false;
 let poseLandmarker = null;
 let webcamStream = null;
 let animationFrameId = null;
+let displayedScore = 100; // 用於平滑滾動顯示分數
 
 // 緩衝區與運動統計
 let repsCount = 0;
@@ -921,14 +922,22 @@ function detectionLoop() {
 
 // ================= 介面繪製與 UI 更新 =================
 function updateDashboardUI() {
-  scoreDisplay.textContent = cachedState.score;
-  scoreBar.style.width = `${cachedState.score}%`;
+  // 指數平滑滾動分數，避免閃爍過快
+  if (cachedState.landmarks) {
+    displayedScore = displayedScore * 0.85 + cachedState.score * 0.15;
+  } else {
+    displayedScore = 100; // 重置
+  }
+  const roundedScore = Math.round(displayedScore);
+
+  scoreDisplay.textContent = roundedScore;
+  scoreBar.style.width = `${roundedScore}%`;
   
   // 動態調整分數顏色
-  if (cachedState.score >= 85) {
+  if (roundedScore >= 85) {
     scoreDisplay.className = "stat-value text-glow-green";
     scoreBar.style.background = "linear-gradient(90deg, #10b981, #34d399)";
-  } else if (cachedState.score >= 60) {
+  } else if (roundedScore >= 60) {
     scoreDisplay.className = "stat-value text-glow-blue";
     scoreBar.style.background = "linear-gradient(90deg, #3b82f6, #60a5fa)";
   } else {
