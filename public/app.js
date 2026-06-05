@@ -3,6 +3,43 @@ import {
   FilesetResolver
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8";
 
+// ================= 全局系統偵錯日誌攔截器 =================
+function logToScreen(message, isError = false) {
+  const consoleDiv = document.getElementById("debug-console");
+  const listDiv = document.getElementById("debug-log-list");
+  if (consoleDiv && listDiv) {
+    consoleDiv.style.display = "block";
+    const item = document.createElement("div");
+    item.style.marginBottom = "6px";
+    item.style.color = isError ? "#ff5555" : "#55ff55";
+    item.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    listDiv.appendChild(item);
+    consoleDiv.scrollTop = consoleDiv.scrollHeight;
+  }
+}
+
+// 攔截 console.error & console.warn
+const originalConsoleError = console.error;
+console.error = function (...args) {
+  logToScreen("[Error] " + args.join(" "), true);
+  originalConsoleError.apply(console, args);
+};
+
+const originalConsoleWarn = console.warn;
+console.warn = function (...args) {
+  logToScreen("[Warn] " + args.join(" "), true);
+  originalConsoleWarn.apply(console, args);
+};
+
+const originalConsoleLog = console.log;
+console.log = function (...args) {
+  const msg = args.join(" ");
+  if (msg.includes("DATABASE") || msg.includes("AI") || msg.includes("Camera") || msg.includes("偵測") || msg.includes("成功") || msg.includes("失敗")) {
+    logToScreen("[Info] " + msg, false);
+  }
+  originalConsoleLog.apply(console, args);
+};
+
 // ================= 常數與關鍵點索引 =================
 const LS_ID = 11, RS_ID = 12; // 左右肩
 const LH_ID = 23, RH_ID = 24; // 左右臀

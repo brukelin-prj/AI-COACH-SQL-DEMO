@@ -4,6 +4,33 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Fitness Coach - 智慧型健康操教練</title>
+  <!-- 全局錯誤攔截器，用於網頁偵錯 -->
+  <script>
+    window.addEventListener("error", (event) => {
+      const consoleDiv = document.getElementById("debug-console");
+      const listDiv = document.getElementById("debug-log-list");
+      if (consoleDiv && listDiv) {
+        consoleDiv.style.display = "block";
+        const item = document.createElement("div");
+        item.style.color = "#ff5555";
+        item.style.marginBottom = "6px";
+        item.textContent = `[JS Error] ${event.message} (${event.filename}:${event.lineno})`;
+        listDiv.appendChild(item);
+      }
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      const consoleDiv = document.getElementById("debug-console");
+      const listDiv = document.getElementById("debug-log-list");
+      if (consoleDiv && listDiv) {
+        consoleDiv.style.display = "block";
+        const item = document.createElement("div");
+        item.style.color = "#ff8888";
+        item.style.marginBottom = "6px";
+        item.textContent = `[Promise Reject] ${event.reason}`;
+        listDiv.appendChild(item);
+      }
+    });
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
@@ -330,6 +357,15 @@
         </div>
         <button id="btn-close-modal" class="btn primary-btn w-full">確認</button>
       </div>
+    </div>
+
+    <!-- 偵錯主控台 (Debug Console) -->
+    <div id="debug-console" style="margin: 20px; padding: 15px; background: rgba(0,0,0,0.85); border: 2px solid #ff5555; border-radius: 12px; font-family: monospace; font-size: 12px; color: #ff5555; max-height: 250px; overflow-y: auto; z-index: 9999; display: none; position: relative;">
+      <h4 style="margin: 0 0 10px 0; color: #fff; display: flex; justify-content: space-between;">
+        <span>🐞 系統偵錯日誌 (Debug Logs)</span>
+        <button onclick="document.getElementById('debug-log-list').innerHTML = '';" style="background: none; border: none; color: #aaa; cursor: pointer; text-decoration: underline;">清除</button>
+      </h4>
+      <div id="debug-log-list"></div>
     </div>
 
   </div>
