@@ -385,8 +385,8 @@ function detectionLoop() {
       let currentFeedback = [];
       let currentScore = 100;
 
-      if (result.poseLandmarks && result.poseLandmarks.length > 0) {
-        const lm = result.poseLandmarks[0]; // 只抓取第一個人體骨架
+      if (result.landmarks && result.landmarks.length > 0) {
+        const lm = result.landmarks[0]; // 只抓取第一個人體骨架
         
         if (!window.hasLoggedDetection) {
           window.hasLoggedDetection = true;
