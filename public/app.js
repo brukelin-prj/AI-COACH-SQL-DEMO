@@ -243,6 +243,9 @@ async function startCamera() {
     });
     
     webcamElement.srcObject = webcamStream;
+    webcamElement.play().catch(err => {
+      console.warn("webcamElement.play() failed or was interrupted:", err);
+    });
     webcamElement.addEventListener("loadedmetadata", () => {
       // 依據相機解析度同步設定 Canvas 尺寸
       canvasElement.width = webcamElement.videoWidth;
@@ -301,40 +304,49 @@ function stopCamera() {
   updateSaveButtonState();
 }
 
-// ================= 核心偵測與邏輯迴圈 =================
 function detectionLoop() {
   if (!isCameraActive || !poseLandmarker) return;
   
-  // 計算實時 FPS
-  frameCount++;
-  const timeNow = performance.now();
-  if (timeNow - lastFpsTime >= 1000) {
-    currentFps = (frameCount * 1000) / (timeNow - lastFpsTime);
-    fpsCounter.textContent = `FPS: ${currentFps.toFixed(1)}`;
-    frameCount = 0;
-    lastFpsTime = timeNow;
-  }
+  if (webcamElement.readyState >= 2) {
+    try {
+      // 動態確保 Canvas 解析度與 Video 尺寸一致
+      if (webcamElement.videoWidth && webcamElement.videoHeight) {
+        if (canvasElement.width !== webcamElement.videoWidth || canvasElement.height !== webcamElement.videoHeight) {
+          canvasElement.width = webcamElement.videoWidth;
+          canvasElement.height = webcamElement.videoHeight;
+        }
+      }
 
-  const timestampMs = performance.now();
-  const result = poseLandmarker.detectForVideo(webcamElement, timestampMs);
-  
-  // 清除前一幀繪圖
-  ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  
-  // 解析度縮放因子
-  const w = canvasElement.width;
-  const h = canvasElement.height;
+      // 計算實時 FPS
+      frameCount++;
+      const timeNow = performance.now();
+      if (timeNow - lastFpsTime >= 1000) {
+        currentFps = (frameCount * 1000) / (timeNow - lastFpsTime);
+        fpsCounter.textContent = `FPS: ${currentFps.toFixed(1)}`;
+        frameCount = 0;
+        lastFpsTime = timeNow;
+      }
 
-  // 暫存目前的運算狀態
-  let currentPerfect = true;
-  let currentFeedback = [];
-  let currentScore = 100;
+      const timestampMs = performance.now();
+      const result = poseLandmarker.detectForVideo(webcamElement, timestampMs);
+      
+      // 清除前一幀繪圖
+      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      // 解析度縮放因子
+      const w = canvasElement.width;
+      const h = canvasElement.height;
 
-  if (result.poseLandmarks && result.poseLandmarks.length > 0) {
-    const lm = result.poseLandmarks[0]; // 只抓取第一個人體骨架
-    
-    if (lm.length >= 29) {
-      cachedState.landmarks = lm;
+      // 暫存目前的運算狀態
+      let currentPerfect = true;
+      let currentFeedback = [];
+      let currentScore = 100;
+
+      if (result.poseLandmarks && result.poseLandmarks.length > 0) {
+        const lm = result.poseLandmarks[0]; // 只抓取第一個人體骨架
+        
+        if (lm.length >= 29) {
+          cachedState.landmarks = lm;
 
       if (activeMode === "twist") {
         // =============== 1. 扭腰動作邏輯 ===============
@@ -846,9 +858,14 @@ function detectionLoop() {
     cachedState.landmarks = null;
   }
 
-  // ================= 繪圖渲染與 UI 更新 (保證每一幀都繪製以防止閃爍) =================
-  updateDashboardUI();
-  drawPoseSkeleton(h, w);
+      // ================= 繪圖渲染與 UI 更新 (保證每一幀都繪製以防止閃爍) =================
+      updateDashboardUI();
+      drawPoseSkeleton(h, w);
+
+    } catch (error) {
+      console.error("Error in detectionLoop:", error);
+    }
+  }
 
   // 遞迴呼叫下一幀
   animationFrameId = requestAnimationFrame(detectionLoop);
@@ -1503,7 +1520,7 @@ btnSquat.addEventListener("click", () => switchMode("squat"));
 btnSidebend.addEventListener("click", () => switchMode("sidebend"));
 
 // 網頁準備就緒後啟動
-window.addEventListener("DOMContentLoaded", () => {
+function initApp() {
   handleMirrorToggle();
   // 禁用開機按鈕直到模型載入完畢
   btnToggleCamera.classList.add("btn-disabled");
@@ -1528,7 +1545,13 @@ window.addEventListener("DOMContentLoaded", () => {
   btnCloseModal.addEventListener('click', () => {
     saveSuccessModal.classList.add('hidden');
   });
-});
+}
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", initApp);
+} else {
+  initApp();
+}
 
 // 當離開頁面時自動清理資源
 window.addEventListener("beforeunload", () => {
