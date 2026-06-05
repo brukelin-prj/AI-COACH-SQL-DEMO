@@ -354,6 +354,12 @@ function detectionLoop() {
         }
       }
 
+      // 偵錯日誌：輸出相機與畫布尺寸
+      if (!window.hasLoggedSizes && webcamElement.videoWidth > 0) {
+        window.hasLoggedSizes = true;
+        console.log(`[Camera] Video size: ${webcamElement.videoWidth}x${webcamElement.videoHeight}, Canvas size: ${canvasElement.width}x${canvasElement.height}`);
+      }
+
       // 計算實時 FPS
       frameCount++;
       const timeNow = performance.now();
@@ -381,6 +387,11 @@ function detectionLoop() {
 
       if (result.poseLandmarks && result.poseLandmarks.length > 0) {
         const lm = result.poseLandmarks[0]; // 只抓取第一個人體骨架
+        
+        if (!window.hasLoggedDetection) {
+          window.hasLoggedDetection = true;
+          console.log(`[AI] Pose detected! Landmarks count: ${lm.length}`);
+        }
         
         if (lm.length >= 29) {
           cachedState.landmarks = lm;
