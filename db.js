@@ -44,8 +44,14 @@ if (process.env.DATABASE_URL) {
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,
+        age INTEGER,
+        height REAL,
+        weight REAL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS height REAL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS weight REAL;
       CREATE TABLE IF NOT EXISTS workouts (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -93,9 +99,15 @@ function initSqlite() {
             CREATE TABLE IF NOT EXISTS users (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               username TEXT UNIQUE NOT NULL,
+              age INTEGER,
+              height REAL,
+              weight REAL,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
           `);
+          sqliteDb.run("ALTER TABLE users ADD COLUMN age INTEGER", () => {});
+          sqliteDb.run("ALTER TABLE users ADD COLUMN height REAL", () => {});
+          sqliteDb.run("ALTER TABLE users ADD COLUMN weight REAL", () => {});
           sqliteDb.run(`
             CREATE TABLE IF NOT EXISTS workouts (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,15 +155,18 @@ const db = {
     });
   },
 
-  createUser: (username) => {
+  createUser: (username, age, height, weight) => {
     return new Promise((resolve, reject) => {
       const cleanUsername = username.trim();
       if (!cleanUsername) return reject(new Error('Username cannot be empty'));
+      const ageVal = age ? parseInt(age) : null;
+      const heightVal = height ? parseFloat(height) : null;
+      const weightVal = weight ? parseFloat(weight) : null;
 
       if (dbEngine === 'postgres') {
         pgPool.query(
-          'INSERT INTO users (username) VALUES ($1) RETURNING *',
-          [cleanUsername],
+          'INSERT INTO users (username, age, height, weight) VALUES ($1, $2, $3, $4) RETURNING *',
+          [cleanUsername, ageVal, heightVal, weightVal],
           (err, result) => {
             if (err) {
               if (err.message.includes('unique') || err.code === '23505') {
@@ -165,17 +180,28 @@ const db = {
           }
         );
       } else if (dbEngine === 'sqlite') {
-        sqliteDb.run('INSERT INTO users (username) VALUES (?)', [cleanUsername], function(err) {
-          if (err) {
-            if (err.message.includes('UNIQUE')) {
-              reject(new Error('Username already exists'));
+        sqliteDb.run(
+          'INSERT INTO users (username, age, height, weight) VALUES (?, ?, ?, ?)',
+          [cleanUsername, ageVal, heightVal, weightVal],
+          function(err) {
+            if (err) {
+              if (err.message.includes('UNIQUE')) {
+                reject(new Error('Username already exists'));
+              } else {
+                reject(err);
+              }
             } else {
-              reject(err);
+              resolve({
+                id: this.lastID,
+                username: cleanUsername,
+                age: ageVal,
+                height: heightVal,
+                weight: weightVal,
+                created_at: new Date().toISOString()
+              });
             }
-          } else {
-            resolve({ id: this.lastID, username: cleanUsername, created_at: new Date().toISOString() });
           }
-        });
+        );
       } else {
         const data = readJsonDb();
         const exists = data.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
@@ -185,6 +211,9 @@ const db = {
         const newUser = {
           id: data.users.length > 0 ? Math.max(...data.users.map(u => u.id)) + 1 : 1,
           username: cleanUsername,
+          age: ageVal,
+          height: heightVal,
+          weight: weightVal,
           created_at: new Date().toISOString()
         };
         data.users.push(newUser);
@@ -471,6 +500,158 @@ const db = {
         });
 
         resolve(summary);
+      }
+    });
+  },
+
+  getAdminSummary: () => {
+    return new Promise((resolve, reject) => {
+      if (dbEngine === 'postgres') {
+        const summary = {
+          total_users: 0,
+          total_workouts: 0,
+          total_reps: 0,
+          avg_score: 0,
+          users: []
+        };
+        
+        pgPool.query('SELECT COUNT(*) as count FROM users', [], (err, uRes) => {
+          if (err) return reject(err);
+          summary.total_users = parseInt(uRes.rows[0].count) || 0;
+          
+          pgPool.query('SELECT COUNT(*) as count, SUM(reps) as reps, AVG(avg_score) as score FROM workouts', [], (err, wRes) => {
+            if (err) return reject(err);
+            const wData = wRes.rows[0];
+            summary.total_workouts = parseInt(wData.count) || 0;
+            summary.total_reps = parseInt(wData.reps) || 0;
+            summary.avg_score = parseFloat(parseFloat(wData.score || 0).toFixed(1));
+            
+            const usersQuery = `
+              SELECT 
+                u.id, 
+                u.username, 
+                u.age, 
+                u.height, 
+                u.weight, 
+                u.created_at,
+                COUNT(w.id) as total_workouts,
+                COALESCE(SUM(w.reps), 0) as total_reps,
+                COALESCE(AVG(w.avg_score), 0) as avg_score,
+                COALESCE(SUM(w.duration_seconds), 0) as total_duration
+              FROM users u
+              LEFT JOIN workouts w ON u.id = w.user_id
+              GROUP BY u.id, u.username, u.age, u.height, u.weight, u.created_at
+              ORDER BY u.username ASC
+            `;
+            pgPool.query(usersQuery, [], (err, usersRes) => {
+              if (err) return reject(err);
+              summary.users = usersRes.rows.map(r => ({
+                id: r.id,
+                username: r.username,
+                age: r.age,
+                height: r.height,
+                weight: r.weight,
+                created_at: r.created_at,
+                total_workouts: parseInt(r.total_workouts) || 0,
+                total_reps: parseInt(r.total_reps) || 0,
+                avg_score: parseFloat(parseFloat(r.avg_score || 0).toFixed(1)),
+                total_duration: parseInt(r.total_duration) || 0
+              }));
+              resolve(summary);
+            });
+          });
+        });
+      } else if (dbEngine === 'sqlite') {
+        const summary = {
+          total_users: 0,
+          total_workouts: 0,
+          total_reps: 0,
+          avg_score: 0,
+          users: []
+        };
+        
+        sqliteDb.get('SELECT COUNT(*) as count FROM users', [], (err, uRow) => {
+          if (err) return reject(err);
+          summary.total_users = uRow.count || 0;
+          
+          sqliteDb.get('SELECT COUNT(*) as count, SUM(reps) as reps, AVG(avg_score) as score FROM workouts', [], (err, wRow) => {
+            if (err) return reject(err);
+            summary.total_workouts = wRow.count || 0;
+            summary.total_reps = wRow.reps || 0;
+            summary.avg_score = parseFloat((wRow.score || 0).toFixed(1));
+            
+            const usersQuery = `
+              SELECT 
+                u.id, 
+                u.username, 
+                u.age, 
+                u.height, 
+                u.weight, 
+                u.created_at,
+                COUNT(w.id) as total_workouts,
+                SUM(w.reps) as total_reps,
+                AVG(w.avg_score) as avg_score,
+                SUM(w.duration_seconds) as total_duration
+              FROM users u
+              LEFT JOIN workouts w ON u.id = w.user_id
+              GROUP BY u.id
+              ORDER BY u.username ASC
+            `;
+            sqliteDb.all(usersQuery, [], (err, rows) => {
+              if (err) return reject(err);
+              summary.users = rows.map(r => ({
+                id: r.id,
+                username: r.username,
+                age: r.age,
+                height: r.height,
+                weight: r.weight,
+                created_at: r.created_at,
+                total_workouts: r.total_workouts || 0,
+                total_reps: r.total_reps || 0,
+                avg_score: parseFloat((r.avg_score || 0).toFixed(1)),
+                total_duration: r.total_duration || 0
+              }));
+              resolve(summary);
+            });
+          });
+        });
+      } else {
+        const data = readJsonDb();
+        const usersSummary = data.users.map(u => {
+          const userWorkouts = data.workouts.filter(w => w.user_id === u.id);
+          const total_reps = userWorkouts.reduce((sum, w) => sum + w.reps, 0);
+          const total_duration = userWorkouts.reduce((sum, w) => sum + w.duration_seconds, 0);
+          const avg_score = userWorkouts.length > 0
+            ? parseFloat((userWorkouts.reduce((sum, w) => sum + w.avg_score, 0) / userWorkouts.length).toFixed(1))
+            : 0;
+          return {
+            id: u.id,
+            username: u.username,
+            age: u.age || null,
+            height: u.height || null,
+            weight: u.weight || null,
+            created_at: u.created_at,
+            total_workouts: userWorkouts.length,
+            total_reps,
+            avg_score,
+            total_duration
+          };
+        });
+        
+        const total_users = data.users.length;
+        const total_workouts = data.workouts.length;
+        const total_reps = data.workouts.reduce((sum, w) => sum + w.reps, 0);
+        const avg_score = total_workouts > 0
+          ? parseFloat((data.workouts.reduce((sum, w) => sum + w.avg_score, 0) / total_workouts).toFixed(1))
+          : 0;
+          
+        resolve({
+          total_users,
+          total_workouts,
+          total_reps,
+          avg_score,
+          users: usersSummary
+        });
       }
     });
   }

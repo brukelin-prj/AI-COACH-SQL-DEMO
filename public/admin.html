@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Fitness Coach - 後台管理系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #080b11;
+      --panel-bg: rgba(17, 22, 37, 0.7);
+      --panel-border: rgba(255, 255, 255, 0.06);
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --accent-blue: #2563eb;
+      --accent-blue-glow: rgba(37, 99, 235, 0.4);
+      --accent-green: #10b981;
+      --accent-green-glow: rgba(16, 185, 129, 0.4);
+      --accent-red: #ef4444;
+      --accent-red-glow: rgba(239, 68, 68, 0.4);
+      --accent-yellow: #f59e0b;
+      --font-family: 'Outfit', 'Noto Sans TC', sans-serif;
+      --shadow-lg: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+      --glass-glow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-primary);
+      font-family: var(--font-family);
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%);
+    }
+
+    .app-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-height: 100vh;
+    }
+
+    /* 頂部導覽列 */
+    .main-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 25px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--shadow-lg);
+      border-radius: 16px;
+    }
+
+    .logo-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-section h1 {
+      font-size: 1.3rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      background: linear-gradient(135deg, #fff 30%, var(--text-secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .pulse-dot {
+      width: 10px;
+      height: 10px;
+      background-color: var(--accent-blue);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-blue-glow);
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 3px 10px;
+      background-color: rgba(37, 99, 235, 0.15);
+      border: 1px solid rgba(37, 99, 235, 0.3);
+      border-radius: 20px;
+      color: #60a5fa;
+    }
+
+    .btn {
+      font-family: var(--font-family);
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 8px 20px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .outline-btn {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      border: 1px solid var(--panel-border);
+    }
+
+    .outline-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .primary-btn {
+      background: var(--accent-blue);
+      color: white;
+      box-shadow: 0 4px 15px var(--accent-blue-glow);
+    }
+
+    .primary-btn:hover {
+      background: #3b82f6;
+      box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
+    }
+
+    .danger-btn {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 4px 10px;
+      font-size: 0.8rem;
+    }
+
+    .danger-btn:hover {
+      background: var(--accent-red);
+      color: white;
+      box-shadow: 0 0 10px var(--accent-red-glow);
+    }
+
+    /* 卡片樣式 */
+    .card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--shadow-lg), var(--glass-glow);
+      border-radius: 20px;
+      padding: 22px;
+    }
+
+    /* 統計網格 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px;
+    }
+
+    .stat-card {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .stat-icon {
+      font-size: 2.2rem;
+      width: 55px;
+      height: 55px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .blue-icon { background: rgba(37, 99, 235, 0.1); border: 1px solid rgba(37, 99, 235, 0.2); }
+    .green-icon { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); }
+    .yellow-icon { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); }
+    .red-icon { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); }
+
+    .stat-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-val {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    /* 主要版面 */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1.6fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-left: 4px solid var(--accent-blue);
+      padding-left: 12px;
+    }
+
+    /* 表格樣式 */
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 14px 16px;
+      font-size: 0.9rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-secondary);
+      background-color: rgba(0, 0, 0, 0.2);
+    }
+
+    tbody tr {
+      transition: background-color 0.2s ease;
+    }
+
+    tbody tr:hover {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    tbody tr.active-row {
+      background-color: rgba(37, 99, 235, 0.1);
+      border-left: 3px solid var(--accent-blue);
+    }
+
+    .table-empty {
+      text-align: center;
+      color: var(--text-secondary);
+      font-style: italic;
+      padding: 40px 0;
+    }
+
+    .glow-text-green {
+      color: var(--accent-green);
+      font-weight: 700;
+    }
+
+    .glow-text-blue {
+      color: #60a5fa;
+      font-weight: 700;
+    }
+
+    .glow-text-red {
+      color: #fca5a5;
+      font-weight: 700;
+    }
+
+    /* 操作按鈕 */
+    .btn-table-action {
+      background: rgba(37, 99, 235, 0.15);
+      color: #93c5fd;
+      border: 1px solid rgba(37, 99, 235, 0.3);
+      padding: 5px 12px;
+      font-size: 0.8rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .btn-table-action:hover {
+      background: var(--accent-blue);
+      color: white;
+      box-shadow: 0 0 8px var(--accent-blue-glow);
+    }
+
+    /* 詳細日誌卡片 */
+    .details-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-style: italic;
+      height: 250px;
+      text-align: center;
+      gap: 15px;
+    }
+
+    .details-placeholder svg {
+      color: rgba(255, 255, 255, 0.15);
+    }
+
+    .user-info-card {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 12px;
+      padding: 15px 20px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .info-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .info-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .info-val {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .table-scroll {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- 頂部導覽列 -->
+    <header class="main-header">
+      <div class="logo-section">
+        <span class="pulse-dot"></span>
+        <h1>AI FITNESS COACH</h1>
+        <span class="badge">後台管理中心</span>
+      </div>
+      <div>
+        <a href="index.html" class="btn outline-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          </svg>
+          返回運動端
+        </a>
+      </div>
+    </header>
+
+    <!-- 總統計數據區 -->
+    <section class="stats-grid">
+      <div class="card stat-card">
+        <div class="stat-icon blue-icon">👥</div>
+        <div class="stat-info">
+          <span class="stat-label">註冊總人數</span>
+          <span id="stat-total-users" class="stat-val">0</span>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon green-icon">🔥</div>
+        <div class="stat-info">
+          <span class="stat-label">累積訓練次數</span>
+          <span id="stat-total-workouts" class="stat-val">0</span>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon yellow-icon">⚡</div>
+        <div class="stat-info">
+          <span class="stat-label">累積動作次數</span>
+          <span id="stat-total-reps" class="stat-val">0</span>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon red-icon">⭐</div>
+        <div class="stat-info">
+          <span class="stat-label">全體平均分數</span>
+          <span id="stat-avg-score" class="stat-val">0</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 主要內容區 -->
+    <section class="main-grid">
+      <!-- 左側：使用者名冊列表 -->
+      <div class="card">
+        <div class="section-title">
+          <span>📋 註冊使用者名冊 (Users Directory)</span>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>使用者帳號</th>
+                <th>年齡</th>
+                <th>身高</th>
+                <th>體重</th>
+                <th>註冊日期</th>
+                <th>累積訓練</th>
+                <th>總次數</th>
+                <th>平均分</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="users-table-body">
+              <tr>
+                <td colspan="9" class="table-empty">載入數據中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 右側：使用者詳細訓練日誌 -->
+      <div class="card">
+        <div class="section-title">
+          <span>🔎 使用者詳細日誌 (Detailed Logs)</span>
+        </div>
+        <div id="details-section">
+          <div class="details-placeholder">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2zm0-4H7V7h10v2zm-4 8H7v-2h6v2z"/>
+            </svg>
+            <p>請點擊左側列表的「調閱詳情」按鈕以檢視該名使用者的歷史運動紀錄。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

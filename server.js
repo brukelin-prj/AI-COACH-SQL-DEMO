@@ -16,6 +16,8 @@ console.log(`Database engine loaded. Fallback JSON mode active: ${db.isUsingFall
 
 // --- REST API ROUTES ---
 
+const isAlphanumeric = (str) => /^[a-zA-Z0-9]+$/.test(str);
+
 // 1. Users endpoints
 app.get('/api/users', async (req, res) => {
   try {
@@ -26,13 +28,45 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-app.post('/api/users', async (req, res) => {
+app.post('/api/users/login', async (req, res) => {
   try {
     const { username } = req.body;
     if (!username) {
       return res.status(400).json({ error: 'Username is required' });
     }
-    const newUser = await db.createUser(username);
+    if (!isAlphanumeric(username)) {
+      return res.status(400).json({ error: 'Username must be alphanumeric (英數字)' });
+    }
+    const user = await db.getUserByUsername(username);
+    if (user) {
+      res.json({ exists: true, user });
+    } else {
+      res.json({ exists: false });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const { username, age, height, weight } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    if (!isAlphanumeric(username)) {
+      return res.status(400).json({ error: 'Username must be alphanumeric (英數字)' });
+    }
+    if (age !== undefined && age !== '' && isNaN(parseInt(age))) {
+      return res.status(400).json({ error: 'Age must be a number' });
+    }
+    if (height !== undefined && height !== '' && isNaN(parseFloat(height))) {
+      return res.status(400).json({ error: 'Height must be a number' });
+    }
+    if (weight !== undefined && weight !== '' && isNaN(parseFloat(weight))) {
+      return res.status(400).json({ error: 'Weight must be a number' });
+    }
+    const newUser = await db.createUser(username, age, height, weight);
     res.status(201).json(newUser);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -89,6 +123,16 @@ app.get('/api/stats', async (req, res) => {
     }
     const stats = await db.getUserStats(user_id);
     res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Admin summary endpoint
+app.get('/api/admin/summary', async (req, res) => {
+  try {
+    const summary = await db.getAdminSummary();
+    res.json(summary);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

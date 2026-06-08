@@ -100,12 +100,6 @@ const guideSquat = document.getElementById("guide-squat");
 const guideSidebend = document.getElementById("guide-sidebend");
 
 // --- 資料庫 / 儀表板新 DOM 元素 ---
-const userSelect = document.getElementById("user-select");
-const btnShowAddUser = document.getElementById("btn-show-add-user");
-const newUserForm = document.getElementById("new-user-form");
-const txtNewUsername = document.getElementById("txt-new-username");
-const btnCreateUser = document.getElementById("btn-create-user");
-const btnCancelUser = document.getElementById("btn-cancel-user");
 const btnSaveSession = document.getElementById("btn-save-session");
 const lblActiveUser = document.getElementById("lbl-active-user");
 
@@ -1173,78 +1167,209 @@ function updateSaveButtonState() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const res = await fetch('/api/users');
-    const users = await res.json();
-    
-    userSelect.innerHTML = '<option value="" disabled selected>選擇使用者...</option>';
-    users.forEach(user => {
-      const opt = document.createElement('option');
-      opt.value = user.id;
-      opt.textContent = user.username;
-      userSelect.appendChild(opt);
-    });
+// ================= 使用者登入/註冊控制 =================
+const loginOverlay = document.getElementById("login-overlay");
+const loginView = document.getElementById("login-view");
+const registerView = document.getElementById("register-view");
+const loginUsernameInput = document.getElementById("login-username");
+const loginErrorMsg = document.getElementById("login-error");
+const btnLoginSubmit = document.getElementById("btn-login-submit");
 
-    // Restore active user from localStorage
-    const savedUserId = localStorage.getItem('fitness_active_user_id');
-    if (savedUserId) {
-      const exists = users.some(u => u.id == savedUserId);
-      if (exists) {
-        userSelect.value = savedUserId;
-        selectUser(savedUserId);
+const registerUsernameDisplay = document.getElementById("register-username-display");
+const registerAgeInput = document.getElementById("register-age");
+const registerHeightInput = document.getElementById("register-height");
+const registerWeightInput = document.getElementById("register-weight");
+const registerErrorMsg = document.getElementById("register-error");
+const btnRegisterSubmit = document.getElementById("btn-register-submit");
+const btnRegisterBack = document.getElementById("btn-register-back");
+
+const lblHeaderUsername = document.getElementById("lbl-header-username");
+const lblHeaderProfile = document.getElementById("lbl-header-profile");
+const btnLogout = document.getElementById("btn-logout");
+
+const isAlphanumeric = (str) => /^[a-zA-Z0-9]+$/.test(str);
+
+async function checkSilentLogin() {
+  const savedUsername = localStorage.getItem("fitness_active_username");
+  if (savedUsername) {
+    try {
+      const res = await fetch("/api/users/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: savedUsername })
+      });
+      const data = await res.json();
+      if (data.exists) {
+        logInUser(data.user);
+        return;
       }
+    } catch (err) {
+      console.error("自動登入失敗:", err);
     }
-  } catch (err) {
-    console.error('載入使用者失敗:', err);
+  }
+  showLoginOverlay();
+}
+
+function showLoginOverlay() {
+  loginOverlay.classList.remove("hidden");
+  loginView.classList.remove("hidden");
+  registerView.classList.add("hidden");
+  loginUsernameInput.value = "";
+  loginErrorMsg.classList.add("hidden");
+  
+  // Disable camera toggle when not logged in
+  btnToggleCamera.classList.add("btn-disabled");
+  btnToggleCamera.disabled = true;
+  if (isCameraActive) stopCamera();
+}
+
+function logInUser(user) {
+  activeUser = user;
+  localStorage.setItem("fitness_active_user_id", user.id);
+  localStorage.setItem("fitness_active_username", user.username);
+  
+  lblHeaderUsername.textContent = user.username;
+  const profileDetails = (user.age && user.height && user.weight) 
+    ? `(${user.age}歲 | ${user.height}cm | ${user.weight}kg)` 
+    : "";
+  lblHeaderProfile.textContent = profileDetails;
+  lblActiveUser.textContent = user.username;
+  
+  // Load stats and dashboard logs
+  loadDashboardData(user.id);
+  updateSaveButtonState();
+  
+  // Hide login overlay
+  loginOverlay.classList.add("hidden");
+  
+  // Enable camera button if model is loaded
+  if (poseLandmarker) {
+    btnToggleCamera.classList.remove("btn-disabled");
+    btnToggleCamera.disabled = false;
   }
 }
 
-async function selectUser(userId) {
-  try {
-    const res = await fetch('/api/users');
-    const users = await res.json();
-    const user = users.find(u => u.id == userId);
-    if (user) {
-      activeUser = user;
-      localStorage.setItem('fitness_active_user_id', user.id);
-      lblActiveUser.textContent = user.username;
-      loadDashboardData(user.id);
-      updateSaveButtonState();
-    }
-  } catch (err) {
-    console.error('選擇使用者失敗:', err);
-  }
-}
-
-async function handleCreateUser() {
-  const username = txtNewUsername.value.trim();
+async function handleLogin() {
+  const username = loginUsernameInput.value.trim();
   if (!username) {
-    alert('請輸入姓名！');
+    loginErrorMsg.textContent = "請輸入使用者帳號！";
+    loginErrorMsg.classList.remove("hidden");
     return;
   }
+  if (!isAlphanumeric(username)) {
+    loginErrorMsg.textContent = "帳號格式錯誤：只能包含英數字！";
+    loginErrorMsg.classList.remove("hidden");
+    return;
+  }
+  
+  loginErrorMsg.classList.add("hidden");
   try {
-    const res = await fetch('/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch("/api/users/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username })
     });
     const data = await res.json();
-    if (res.status === 201) {
-      txtNewUsername.value = '';
-      newUserForm.classList.add('hidden');
-      await loadUsers();
-      // Select the newly created user
-      userSelect.value = data.id;
-      selectUser(data.id);
-      speakText(`建立使用者 ${username} 成功`);
+    if (res.status !== 200) {
+      loginErrorMsg.textContent = data.error || "連線伺服器失敗";
+      loginErrorMsg.classList.remove("hidden");
+      return;
+    }
+    
+    if (data.exists) {
+      logInUser(data.user);
+      speakText(`歡迎回來，${data.user.username}`);
     } else {
-      alert(data.error || '建立使用者失敗');
+      // Transition to registration view
+      loginView.classList.add("hidden");
+      registerView.classList.remove("hidden");
+      registerUsernameDisplay.value = username;
+      registerAgeInput.value = "";
+      registerHeightInput.value = "";
+      registerWeightInput.value = "";
+      registerErrorMsg.classList.add("hidden");
     }
   } catch (err) {
-    console.error('建立使用者錯誤:', err);
-    alert('建立使用者錯誤，請稍後再試。');
+    console.error("登入錯誤:", err);
+    loginErrorMsg.textContent = "登入發生錯誤，請稍候再試。";
+    loginErrorMsg.classList.remove("hidden");
   }
+}
+
+async function handleRegister() {
+  const username = registerUsernameDisplay.value.trim();
+  const age = registerAgeInput.value.trim();
+  const height = registerHeightInput.value.trim();
+  const weight = registerWeightInput.value.trim();
+  
+  if (!age || !height || !weight) {
+    registerErrorMsg.textContent = "請填寫所有個人資料欄位！";
+    registerErrorMsg.classList.remove("hidden");
+    return;
+  }
+  if (parseInt(age) < 1 || parseInt(age) > 120) {
+    registerErrorMsg.textContent = "請輸入有效的年齡 (1-120歲)！";
+    registerErrorMsg.classList.remove("hidden");
+    return;
+  }
+  if (parseFloat(height) < 50 || parseFloat(height) > 250) {
+    registerErrorMsg.textContent = "請輸入有效的身高 (50-250公分)！";
+    registerErrorMsg.classList.remove("hidden");
+    return;
+  }
+  if (parseFloat(weight) < 10 || parseFloat(weight) > 300) {
+    registerErrorMsg.textContent = "請輸入有效的體重 (10-300公斤)！";
+    registerErrorMsg.classList.remove("hidden");
+    return;
+  }
+  
+  registerErrorMsg.classList.add("hidden");
+  try {
+    const res = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, age, height, weight })
+    });
+    const data = await res.json();
+    if (res.status === 201) {
+      logInUser(data);
+      speakText(`註冊成功，歡迎使用系統，${data.username}`);
+    } else {
+      registerErrorMsg.textContent = data.error || "註冊失敗";
+      registerErrorMsg.classList.remove("hidden");
+    }
+  } catch (err) {
+    console.error("註冊錯誤:", err);
+    registerErrorMsg.textContent = "註冊請求錯誤，請稍候再試。";
+    registerErrorMsg.classList.remove("hidden");
+  }
+}
+
+function handleLogout() {
+  localStorage.removeItem("fitness_active_user_id");
+  localStorage.removeItem("fitness_active_username");
+  activeUser = null;
+  
+  lblHeaderUsername.textContent = "";
+  lblHeaderProfile.textContent = "";
+  lblActiveUser.textContent = "尚未選擇";
+  
+  // Clear stats UI
+  dbTotalWorkouts.textContent = "0";
+  dbTotalReps.textContent = "0";
+  dbAvgScore.textContent = "0分";
+  historyTableBody.innerHTML = `
+    <tr>
+      <td colspan="6" class="table-empty">請先登入使用者以載入歷史紀錄</td>
+    </tr>
+  `;
+  if (trendChartInstance) {
+    trendChartInstance.destroy();
+    trendChartInstance = null;
+  }
+  personalizedCoachTip.classList.add("hidden");
+  
+  showLoginOverlay();
 }
 
 async function loadDashboardData(userId) {
@@ -1584,20 +1709,22 @@ function initApp() {
   btnToggleCamera.disabled = true;
   initPoseModel();
 
-  // Load database users
-  loadUsers();
+  // Check silent login or show login overlay
+  checkSilentLogin();
 
-  // New events for Database features
-  userSelect.addEventListener('change', (e) => selectUser(e.target.value));
-  btnShowAddUser.addEventListener('click', () => {
-    newUserForm.classList.remove('hidden');
-    txtNewUsername.focus();
+  // Bind Login / Register Event Listeners
+  btnLoginSubmit.addEventListener("click", handleLogin);
+  loginUsernameInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") handleLogin();
   });
-  btnCancelUser.addEventListener('click', () => {
-    newUserForm.classList.add('hidden');
-    txtNewUsername.value = '';
+  btnRegisterSubmit.addEventListener("click", handleRegister);
+  btnRegisterBack.addEventListener("click", () => {
+    registerView.classList.add("hidden");
+    loginView.classList.remove("hidden");
+    loginUsernameInput.focus();
   });
-  btnCreateUser.addEventListener('click', handleCreateUser);
+  btnLogout.addEventListener("click", handleLogout);
+
   btnSaveSession.addEventListener('click', saveWorkoutSession);
   btnCloseModal.addEventListener('click', () => {
     saveSuccessModal.classList.add('hidden');
