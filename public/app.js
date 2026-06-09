@@ -1,1743 +1,1081 @@
-import {
-  PoseLandmarker,
-  FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8";
+// --- 前端核心控制與 AI 判定邏輯 (app.js - 獨立小節重構版) ---
 
-// ================= 全局系統偵錯日誌攔截器 =================
-function logToScreen(message, isError = false) {
-  const consoleDiv = document.getElementById("debug-console");
-  const listDiv = document.getElementById("debug-log-list");
-  if (consoleDiv && listDiv) {
-    consoleDiv.style.display = "block";
-    const item = document.createElement("div");
-    item.style.marginBottom = "6px";
-    item.style.color = isError ? "#ff5555" : "#55ff55";
-    item.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-    listDiv.appendChild(item);
-    consoleDiv.scrollTop = consoleDiv.scrollHeight;
-  }
+// --- 狀態機定義 ---
+const STATE_LOGIN = 'login';
+const STATE_MENU = 'menu';
+const STATE_WORKOUT = 'workout';
+let currentAppState = STATE_LOGIN;
+
+// --- 全域變數 ---
+let currentUser = null;
+let currentStageIndex = 0; // 當前所選節次 (0-8)
+let currentScore = 0;
+let currentBeat = 0;
+let currentSection = 1;
+
+// 儲存當前小節的得分與偵測次數，用於計算該小節平均分數
+let stageScores = [];
+let stageStartTime = 0;
+
+// 評分平滑化與更新頻率限制
+let smoothedMatchPct = 0;
+let lastUiUpdateTime = 0;
+
+// 自適應 AI 閥值 (從後端獲取，預設寬鬆值)
+let configThresholds = {
+    squat_tolerance: 15.0,
+    arm_tolerance: 15.0,
+    twist_tolerance: 15.0
+};
+
+// 8式動作名稱與指引
+const STAGES = [
+    { name: "預備動作", camera: "正面", desc: "兩手插腰，雙腳併攏，跟隨音樂預備起！" },
+    { name: "第一節：下肢全深蹲", camera: "側面", desc: "背部挺直，進行全蹲（膝關節彎曲角度需小於 100 度）" },
+    { name: "第二節：下肢半深蹲", camera: "側面", desc: "膝蓋微彎進行半深蹲（膝關節夾角介於 110-140 度）" },
+    { name: "第三節：上肢向上伸展", camera: "正面", desc: "雙手向上高舉過頭，伸直手肘" },
+    { name: "第四節：擴胸轉體", camera: "正面", desc: "雙手前平舉 -> 一手搭對肩、另一臂水平向後拉轉體" },
+    { name: "第五節：體側左右彎曲", camera: "正面", desc: "雙手高舉，身體隨節奏交替往左、右側彎" },
+    { name: "第六節：前後彎體", camera: "側面", desc: "前彎下探觸地 -> 隨後雙手插腰身體微幅後仰" },
+    { name: "第七節：四肢協調伸展", camera: "正面", desc: "雙腳跳開/開立，雙手向兩側平展或向上揚起" },
+    { name: "第八節：呼吸整理運動", camera: "正面", desc: "配合呼吸，雙手慢速上下平舉揮動" }
+];
+
+// --- 幾何工具函式 ---
+function getAngle(p1, p2, p3) {
+    if (!p1 || !p2 || !p3) return 180;
+    
+    const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
+    const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+    
+    const dotProduct = v1.x * v2.x + v1.y * v2.y;
+    const len1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+    const len2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+    
+    if (len1 === 0 || len2 === 0) return 180;
+    
+    const cosAngle = Math.max(-1.0, Math.min(1.0, dotProduct / (len1 * len2)));
+    const angle = Math.acos(cosAngle);
+    return angle * (180 / Math.PI); // 回傳 0-180 度
 }
 
-// 攔截 console.error & console.warn
-const originalConsoleError = console.error;
-console.error = function (...args) {
-  logToScreen("[Error] " + args.join(" "), true);
-  originalConsoleError.apply(console, args);
-};
+// --- DOM 元素 ---
+const authModal = document.getElementById("auth-modal");
+const btnPower = document.getElementById("btn-power");
+const powerLed = document.getElementById("power-led");
 
-const originalConsoleWarn = console.warn;
-console.warn = function (...args) {
-  logToScreen("[Warn] " + args.join(" "), true);
-  originalConsoleWarn.apply(console, args);
-};
+// 螢幕容器切換
+const tvMenuScreen = document.getElementById("tv-menu-screen");
+const tvWorkoutScreen = document.getElementById("tv-workout-screen");
+const btnBackToMenu = document.getElementById("btn-back-to-menu");
+const workoutBeatProgress = document.getElementById("workout-beat-progress");
 
-const originalConsoleLog = console.log;
-console.log = function (...args) {
-  const msg = args.join(" ");
-  if (msg.includes("DATABASE") || msg.includes("AI") || msg.includes("Camera") || msg.includes("偵測") || msg.includes("成功") || msg.includes("失敗")) {
-    logToScreen("[Info] " + msg, false);
-  }
-  originalConsoleLog.apply(console, args);
-};
+// LED 儀表板與回饋
+const ledStage = document.getElementById("led-stage");
+const ledActionName = document.getElementById("led-action-name");
+const ledMatchPct = document.getElementById("led-match-pct");
+const ledScore = document.getElementById("led-score");
+const ledCamDir = document.getElementById("led-cam-dir");
+const feedbackText = document.getElementById("feedback-text");
+const feedbackSmiley = document.getElementById("feedback-smiley");
+const matchBar = document.getElementById("match-bar");
+const poseWarning = document.getElementById("pose-warning");
 
-// ================= 常數與關鍵點索引 =================
-const LS_ID = 11, RS_ID = 12; // 左右肩
-const LH_ID = 23, RH_ID = 24; // 左右臀
-const LK_ID = 25, RK_ID = 26; // 左右膝
-const LA_ID = 27, RA_ID = 28; // 左右踝
-const LE_ID = 13, RE_ID = 14; // 左右肘
-const LW_ID = 15, RW_ID = 16; // 左右腕
+// 畫布與影像
+const videoElement = document.getElementById("webcam");
+const canvasPlayer = document.getElementById("canvas-player");
+const ctxPlayer = canvasPlayer.getContext("2d");
+const canvasCoach = document.getElementById("canvas-coach");
+const ctxCoach = canvasCoach.getContext("2d");
 
-// 動作閥值
-const REP_THRESHOLD_RATIO = 0.70;
-const REP_RECOVERY_RATIO = 0.95;
-const COM_TOLERANCE_PX = 30; // 30 像素
-const SQUAT_TARGET_ANGLE = 90;
-const SQUAT_ANGLE_TOLERANCE = 15; // 寬放為 90 +/- 15 度
+// 旋鈕
+const knobChannel = document.getElementById("knob-channel");
+const knobVolume = document.getElementById("knob-volume");
 
-// ================= DOM 元素宣告 =================
-const webcamElement = document.getElementById("webcam");
-const canvasElement = document.getElementById("output-canvas");
-const ctx = canvasElement.getContext("2d");
-const loadingOverlay = document.getElementById("loading-overlay");
-const modelStatusText = document.getElementById("model-status-text");
-const modelSpinner = document.getElementById("model-spinner");
-const fpsCounter = document.getElementById("fps-counter");
+// --- 初始化 MediaPipe Pose 與 Camera (動態建立/銷毀) ---
+let pose = null;
+let camera = null;
+let isTVOn = false;
+let lastFrameTime = 0;
 
-// 按鈕與控制項
-const btnToggleCamera = document.getElementById("btn-toggle-camera");
-const chkMirror = document.getElementById("chk-mirror");
-const chkTts = document.getElementById("chk-tts");
-const btnTwist = document.getElementById("btn-twist");
-const btnSquat = document.getElementById("btn-squat");
-const btnSidebend = document.getElementById("btn-sidebend");
-
-// 數據看板
-const repDisplay = document.getElementById("rep-display");
-const repStatus = document.getElementById("rep-status");
-const scoreDisplay = document.getElementById("score-display");
-const scoreBar = document.getElementById("score-bar");
-const feedbackList = document.getElementById("feedback-list");
-const posePerfectBadge = document.getElementById("pose-perfect-badge");
-
-// 指標值元件
-const metricTwistAngle = document.getElementById("metric-twist-angle");
-const metricShoulderHipRatio = document.getElementById("metric-shoulder-hip-ratio");
-const metricSquatSide = document.getElementById("metric-squat-side");
-const metricKneeAngle = document.getElementById("metric-knee-angle");
-const metricArmAngle = document.getElementById("metric-arm-angle");
-const metricComOffset = document.getElementById("metric-com-offset");
-
-// 體側彎指標元件
-const metricSidebendAngle = document.getElementById("metric-sidebend-angle");
-const metricSidebendDirection = document.getElementById("metric-sidebend-direction");
-const metricSidebendHipShift = document.getElementById("metric-sidebend-hip-shift");
-const metricSidebendArmStatus = document.getElementById("metric-sidebend-arm-status");
-
-// 指導方針元件
-const guideTwist = document.getElementById("guide-twist");
-const guideSquat = document.getElementById("guide-squat");
-const guideSidebend = document.getElementById("guide-sidebend");
-
-// --- 資料庫 / 儀表板新 DOM 元素 ---
-const btnSaveSession = document.getElementById("btn-save-session");
-const lblActiveUser = document.getElementById("lbl-active-user");
-
-const dbTotalWorkouts = document.getElementById("db-total-workouts");
-const dbTotalReps = document.getElementById("db-total-reps");
-const dbAvgScore = document.getElementById("db-avg-score");
-const historyTableBody = document.getElementById("history-table-body");
-
-const saveSuccessModal = document.getElementById("save-success-modal");
-const btnCloseModal = document.getElementById("btn-close-modal");
-const modalSummaryMode = document.getElementById("modal-summary-mode");
-const modalSummaryReps = document.getElementById("modal-summary-reps");
-const modalSummaryScore = document.getElementById("modal-summary-score");
-
-// 個人化叮嚀元件
-const personalizedCoachTip = document.getElementById("personalized-coach-tip");
-const coachTipText = document.getElementById("coach-tip-text");
-
-// ================= 應用程式狀態 =================
-let activeMode = "twist"; // "twist", "squat", "sidebend"
-let isCameraActive = false;
-let poseLandmarker = null;
-let webcamStream = null;
-let animationFrameId = null;
-let displayedScore = 100; // 用於平滑滾動顯示分數
-
-// 緩衝區與運動統計
-let repsCount = 0;
-let lastRepTime = 0;
-let repState = "neutral";
-let stableFrames = 0; // 用於體側彎的穩定影格數檢測
-const angleBuffer = [];
-const ratioBuffer = [];
-const BUFFER_MAX_LEN = 5;
-
-// FPS 計算
-let lastFpsTime = performance.now();
-let frameCount = 0;
-let currentFps = 0;
-
-// TTS 控制
-let lastSpeechTime = 0;
-const SPEECH_COOLDOWN = 2000; // 每次語音間隔至少 2 秒
-
-// 資料庫與歷史狀態
-let activeUser = null;
-let sessionScores = [];
-let sessionStartTime = null;
-let trendChartInstance = null;
-let userStats = null;
-const readableModeNames = {
-  twist: "腰部扭轉",
-  squat: "深蹲動作",
-  sidebend: "體側彎動作"
-};
-
-// 緩存顯示變數，防止畫面跳動
-let cachedState = {
-  score: 100,
-  feedback: [],
-  perfect: true,
-  avgAngle: 0.0,
-  avgRatio: 0.0,
-  landmarks: null
-};
-
-// ================= 初始化 AI 模型 =================
-async function initPoseModel() {
-  try {
-    modelStatusText.textContent = "載入模型資源中...";
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-    );
-    
-    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-        delegate: "GPU"
-      },
-      runningMode: "VIDEO",
-      numPoses: 1
+function initPoseDetection() {
+    console.log("Dynamically initializing MediaPipe Pose Engine...");
+    pose = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
 
-    modelStatusText.textContent = "AI 模型準備就緒";
-    modelSpinner.classList.add("hidden");
-    loadingOverlay.classList.add("hidden");
-    
-    // 預先啟用按鈕
-    btnToggleCamera.classList.remove("btn-disabled");
-    btnToggleCamera.disabled = false;
-  } catch (error) {
-    console.error("AI 模型載入失敗:", error);
-    modelStatusText.textContent = "模型載入失敗";
-    alert("MediaPipe 模型載入失敗，請確認網路連線是否正常。");
-  }
-}
-
-// ================= 語音合成系統 (Web Speech API) =================
-function speakText(text) {
-  if (!chkTts.checked) return;
-  const now = Date.now();
-  if (now - lastSpeechTime < SPEECH_COOLDOWN) return;
-
-  // 立即取消前一通語音以避免排隊延遲
-  window.speechSynthesis.cancel();
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-TW";
-  utterance.rate = 1.1; // 稍微快一點，語氣較自然俐落
-  
-  // 試著取得中文語音人聲
-  const voices = window.speechSynthesis.getVoices();
-  const zhVoice = voices.find(v => v.lang.includes("zh-TW") || v.lang.includes("zh-HK") || v.lang.includes("zh-CN"));
-  if (zhVoice) {
-    utterance.voice = zhVoice;
-  }
-
-  window.speechSynthesis.speak(utterance);
-  lastSpeechTime = now;
-}
-
-// ================= 幾何力學計算函數 =================
-
-// 計算 2D 平面上 A-B-C 三點的夾角 (B 為頂點)
-function calculateAngle(a, b, c) {
-  const ba = { x: a.x - b.x, y: a.y - b.y };
-  const bc = { x: c.x - b.x, y: c.y - b.y };
-
-  const dotProduct = ba.x * bc.x + ba.y * bc.y;
-  const normBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y);
-  const normBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y);
-
-  if (normBA === 0 || normBC === 0) return 180.0;
-
-  let cosAngle = dotProduct / (normBA * normBC);
-  cosAngle = Math.max(-1.0, Math.min(1.0, cosAngle)); // 防止溢出精度錯誤
-  
-  const angleRad = Math.acos(cosAngle);
-  return angleRad * (180.0 / Math.PI);
-}
-
-// 依肩寬與臀寬比例計算扭轉角度
-function calculateAngleFromRatio(shoulderWidth, hipWidth) {
-  if (hipWidth <= 0) return 0.0;
-  let ratio = shoulderWidth / hipWidth;
-  ratio = Math.max(0.0, Math.min(1.0, ratio));
-  if (ratio >= 1.0) return 0.0;
-  const angleRad = Math.acos(ratio);
-  return angleRad * (180.0 / Math.PI);
-}
-
-// ================= 相機串流管理 =================
-async function toggleCamera() {
-  if (isCameraActive) {
-    stopCamera();
-  } else {
-    await startCamera();
-  }
-}
-
-async function startCamera() {
-  if (!poseLandmarker) return;
-  
-  try {
-    loadingOverlay.classList.remove("hidden");
-    webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        facingMode: "user"
-      },
-      audio: false
+    pose.setOptions({
+        modelComplexity: 0, // 0: Lite 模式，極低 RAM 佔用，適合低階行動端
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
-    
-    webcamElement.srcObject = webcamStream;
-    webcamElement.play().catch(err => {
-      console.warn("webcamElement.play() failed or was interrupted:", err);
-    });
-    webcamElement.addEventListener("loadedmetadata", () => {
-      // 依據相機解析度同步設定 Canvas 尺寸
-      canvasElement.width = webcamElement.videoWidth;
-      canvasElement.height = webcamElement.videoHeight;
-      
-      loadingOverlay.classList.add("hidden");
-      isCameraActive = true;
-      btnToggleCamera.textContent = "關閉相機";
-      btnToggleCamera.classList.replace("primary-btn", "btn-disabled");
-      
-      // 重設計數器與 Session 數據
-      repsCount = 0;
-      repDisplay.textContent = repsCount;
-      stableFrames = 0;
-      sessionScores = [];
-      sessionStartTime = Date.now();
-      updateSaveButtonState();
-      
-      // 開始繪製與運算迴圈
-      lastFpsTime = performance.now();
-      frameCount = 0;
-      animationFrameId = requestAnimationFrame(detectionLoop);
-      
-      speakText("相機已開啟，請退後至全身入鏡");
-    });
-  } catch (error) {
-    console.error("相機開啟失敗:", error);
-    loadingOverlay.classList.add("hidden");
-    alert("無法存取相機，請檢查瀏覽器權限設定。");
-  }
+
+    pose.onResults(onPoseResults);
 }
 
-function stopCamera() {
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-    animationFrameId = null;
-  }
-  
-  if (webcamStream) {
-    webcamStream.getTracks().forEach(track => track.stop());
-    webcamStream = null;
-  }
-  
-  webcamElement.srcObject = null;
-  ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  
-  isCameraActive = false;
-  btnToggleCamera.textContent = "開啟相機";
-  btnToggleCamera.classList.replace("btn-disabled", "primary-btn");
-  fpsCounter.textContent = "FPS: 0.0";
-  
-  feedbackList.innerHTML = `<div class="feedback-placeholder">請開啟相機並站立於畫面前以開始偵測...</div>`;
-  posePerfectBadge.classList.remove("visible");
-  
-  speakText("相機已關閉");
-  updateSaveButtonState();
-}
-
-function detectionLoop() {
-  if (!isCameraActive || !poseLandmarker) return;
-  
-  if (webcamElement.readyState >= 2) {
-    try {
-      // 動態確保 Canvas 解析度與 Video 尺寸一致
-      if (webcamElement.videoWidth && webcamElement.videoHeight) {
-        if (canvasElement.width !== webcamElement.videoWidth || canvasElement.height !== webcamElement.videoHeight) {
-          canvasElement.width = webcamElement.videoWidth;
-          canvasElement.height = webcamElement.videoHeight;
-        }
-      }
-
-      // 偵錯日誌：輸出相機與畫布尺寸
-      if (!window.hasLoggedSizes && webcamElement.videoWidth > 0) {
-        window.hasLoggedSizes = true;
-        console.log(`[Camera] Video size: ${webcamElement.videoWidth}x${webcamElement.videoHeight}, Canvas size: ${canvasElement.width}x${canvasElement.height}`);
-      }
-
-      // 計算實時 FPS
-      frameCount++;
-      const timeNow = performance.now();
-      if (timeNow - lastFpsTime >= 1000) {
-        currentFps = (frameCount * 1000) / (timeNow - lastFpsTime);
-        fpsCounter.textContent = `FPS: ${currentFps.toFixed(1)}`;
-        frameCount = 0;
-        lastFpsTime = timeNow;
-      }
-
-      const timestampMs = performance.now();
-      const result = poseLandmarker.detectForVideo(webcamElement, timestampMs);
-      
-      // 清除前一幀繪圖
-      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      
-      // 解析度縮放因子
-      const w = canvasElement.width;
-      const h = canvasElement.height;
-
-      // 暫存目前的運算狀態
-      let currentPerfect = true;
-      let currentFeedback = [];
-      let currentScore = 100;
-
-      if (result.landmarks && result.landmarks.length > 0) {
-        const lm = result.landmarks[0]; // 只抓取第一個人體骨架
-        
-        if (!window.hasLoggedDetection) {
-          window.hasLoggedDetection = true;
-          console.log(`[AI] Pose detected! Landmarks count: ${lm.length}`);
-        }
-        
-        if (lm.length >= 29) {
-          cachedState.landmarks = lm;
-
-      if (activeMode === "twist") {
-        // =============== 1. 扭腰動作邏輯 ===============
-        const ls = lm[LS_ID];
-        const rs = lm[RS_ID];
-        const lh = lm[LH_ID];
-        const rh = lm[RH_ID];
-        const lk = lm[LK_ID];
-        const rk = lm[RK_ID];
-        const la = lm[LA_ID];
-        const ra = lm[RA_ID];
-
-        // 檢查關鍵關節可見度
-        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID];
-        let jointsVisible = true;
-        for (const idx of requiredJoints) {
-          if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
-            jointsVisible = false;
-            break;
-          }
-        }
-
-        if (!jointsVisible) {
-          metricTwistAngle.textContent = "-";
-          metricShoulderHipRatio.textContent = "-";
-          currentFeedback.push("關鍵關節（肩膀、臀部）未完全入鏡，請退後調整位置");
-          currentPerfect = false;
-          currentScore = 0;
-        } else {
-          const shoulderWidth = Math.abs(rs.x - ls.x);
-          const hipWidth = Math.abs(rh.x - lh.x);
-
-          const currentRatio = shoulderWidth / Math.max(hipWidth, 0.01);
-          const currentAngle = calculateAngleFromRatio(shoulderWidth, hipWidth);
-
-          // 緩衝器平滑化
-          angleBuffer.push(currentAngle);
-          ratioBuffer.push(currentRatio);
-          if (angleBuffer.length > BUFFER_MAX_LEN) angleBuffer.shift();
-          if (ratioBuffer.length > BUFFER_MAX_LEN) ratioBuffer.shift();
-
-          cachedState.avgAngle = angleBuffer.reduce((a, b) => a + b, 0) / angleBuffer.length;
-          cachedState.avgRatio = ratioBuffer.reduce((a, b) => a + b, 0) / ratioBuffer.length;
-
-          // 計算對稱水平度與偏移
-          const shoulderTilt = Math.abs(ls.y - rs.y);
-          const hipTilt = Math.abs(lh.y - rh.y);
-          const bodyShiftX = Math.abs((ls.x + rs.x) / 2 - (lh.x + rh.x) / 2);
-
-          // 雙膝夾角
-          const leftKnee = calculateAngle(lh, lk, la);
-          const rightKnee = calculateAngle(rh, rk, ra);
-          const avgKnee = (leftKnee + rightKnee) / 2;
-
-          const timeSec = Date.now() / 1000;
-
-          // --- 次數計數狀態機 ---
-          if (cachedState.avgRatio < REP_THRESHOLD_RATIO && repState === "neutral") {
-            repState = "twisting";
-            repStatus.textContent = "Twisting";
-            repStatus.style.color = "var(--accent-yellow)";
-            if (timeSec - lastRepTime > 2.0) {
-              speakText("開始扭轉");
-            }
-          } else if (repState === "twisting" && cachedState.avgRatio > REP_RECOVERY_RATIO) {
-            if (timeSec - lastRepTime > 1.0) {
-              repsCount++;
-              repDisplay.textContent = repsCount;
-              lastRepTime = timeSec;
-              repState = "returning";
-              repStatus.textContent = "Done";
-              repStatus.style.color = "var(--accent-green)";
-              
-              speakText(`第 ${repsCount} 下`);
-              
-              if (cachedState.avgAngle >= 35 && cachedState.avgAngle <= 55) {
-                speakText("完美姿勢");
-              } else {
-                speakText("注意扭轉角度");
-              }
-              updateSaveButtonState();
-            }
-          } else if (cachedState.avgRatio > 0.95) {
-            repState = "neutral";
-            repStatus.textContent = "Neutral";
-            repStatus.style.color = "var(--text-secondary)";
-          }
-
-          // --- 評分核心邏輯 ---
-          let scorePart = 0;
-
-          // A. 扭腰角度評分 (40 分)
-          if (cachedState.avgAngle >= 35 && cachedState.avgAngle <= 55) {
-            scorePart += 40;
-          } else if (cachedState.avgAngle < 35) {
-            scorePart += Math.max(0, 40 - (35 - cachedState.avgAngle) * 2.5);
-            currentFeedback.push("請加大腰部扭轉幅度");
-            currentPerfect = false;
-          } else {
-            scorePart += Math.max(0, 40 - (cachedState.avgAngle - 55) * 2.5);
-            currentFeedback.push("扭轉幅度過大，請稍減");
-            currentPerfect = false;
-          }
-
-          // B. 骨盆水平穩定度 (20 分)
-          if (hipTilt < 0.05) {
-            scorePart += 20;
-          } else {
-            scorePart += Math.max(0, 20 - hipTilt * 250);
-            currentFeedback.push("請保持骨盆水平，不要傾斜");
-            currentPerfect = false;
-          }
-
-          // C. 肩膀水平度 (15 分)
-          if (shoulderTilt < 0.05) {
-            scorePart += 15;
-          } else {
-            scorePart += Math.max(0, 15 - shoulderTilt * 250);
-            currentFeedback.push("肩膀傾斜，請兩側維持水平");
-            currentPerfect = false;
-          }
-
-          // D. 膝蓋微彎度 (15 分)
-          if (avgKnee >= 160) {
-            scorePart += 15;
-          } else {
-            scorePart += Math.max(0, 15 - (160 - avgKnee) * 1.5);
-            currentFeedback.push("膝蓋彎曲過深，請稍微直立");
-            currentPerfect = false;
-          }
-
-          // E. 身體中軸穩定度 (10 分)
-          if (bodyShiftX < 0.05) {
-            scorePart += 10;
-          } else {
-            scorePart += Math.max(0, 10 - bodyShiftX * 250);
-            currentFeedback.push("身體請勿左右歪斜晃動");
-            currentPerfect = false;
-          }
-
-          currentScore = Math.round(scorePart);
-
-          // 即時語音提醒
-          if (!currentPerfect && timeSec - lastRepTime > 1.8) {
-            if (currentFeedback.length > 0) {
-              speakText(currentFeedback[0]); // 播報最主要的一項建議
-            }
-          }
-
-          // 更新數據看板指標
-          metricTwistAngle.textContent = `${cachedState.avgAngle.toFixed(1)}°`;
-          metricShoulderHipRatio.textContent = cachedState.avgRatio.toFixed(2);
-        }
-
-      } else if (activeMode === "squat") {
-        // =============== 2. 深蹲動作邏輯 ===============
-        const ls_x = lm[LS_ID].x * w;
-        const rs_x = lm[RS_ID].x * w;
-
-        // A. 檢測方向 (正面誤判阻擋)
-        if (Math.abs(ls_x - rs_x) < w * 0.1) {
-          metricSquatSide.textContent = "正面 (請側身)";
-          metricSquatSide.style.color = "var(--accent-red)";
-          currentFeedback.push("檢測到正面，請轉向側面以利分析深蹲");
-          currentPerfect = false;
-          currentScore = 30;
-        } else {
-          let s_idx, h_idx, k_idx, e_idx, a_idx, w_idx;
-          let sideLabel = "";
-
-          if (ls_x < rs_x) {
-            sideLabel = "左側在前 (面向右)";
-            s_idx = 11; h_idx = 23; k_idx = 25; e_idx = 13; a_idx = 27; w_idx = 15;
-          } else {
-            sideLabel = "右側在前 (面向左)";
-            s_idx = 12; h_idx = 24; k_idx = 26; e_idx = 14; a_idx = 28; w_idx = 16;
-          }
-
-          metricSquatSide.textContent = sideLabel;
-          metricSquatSide.style.color = "var(--text-primary)";
-
-          // 檢查關鍵關節可見度
-          const requiredJoints = [s_idx, h_idx, k_idx, a_idx];
-          let jointsVisible = true;
-          for (const idx of requiredJoints) {
-            if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
-              jointsVisible = false;
-              break;
-            }
-          }
-
-          if (!jointsVisible) {
-            metricKneeAngle.textContent = "-";
-            metricArmAngle.textContent = "-";
-            metricComOffset.textContent = "-";
-            metricComOffset.style.color = "var(--text-secondary)";
-            currentFeedback.push("關鍵關節（膝蓋、腳踝）未完全入鏡，請退後使全身入鏡");
-            currentPerfect = false;
-            currentScore = 0;
-          } else {
-            // 取出 2D 關節座標
-            const shoulder = { x: lm[s_idx].x * w, y: lm[s_idx].y * h };
-            const hip = { x: lm[h_idx].x * w, y: lm[h_idx].y * h };
-            const knee = { x: lm[k_idx].x * w, y: lm[k_idx].y * h };
-            const elbow = { x: lm[e_idx].x * w, y: lm[e_idx].y * h };
-            const ankle = { x: lm[a_idx].x * w, y: lm[a_idx].y * h };
-            const wrist = { x: lm[w_idx].x * w, y: lm[w_idx].y * h };
-
-            // 計算角度
-            const kneeAngle = calculateAngle(hip, knee, ankle);
-            const armAngle = calculateAngle(shoulder, elbow, wrist);
-
-            // 計算重心偏離度 (以腳踝與臀部的水平差距計算)
-            let centerOffset = 0;
-            let centerOk = true;
-
-            if (sideLabel.includes("面向右")) {
-              centerOffset = ankle.x - hip.x;
-            } else {
-              centerOffset = hip.x - ankle.x;
-            }
-
-            const timeSec = Date.now() / 1000;
-
-            // --- 深蹲次數計數狀態機 ---
-            // 下蹲達標閥值 (膝蓋夾角小於 110 度進入深蹲區)
-            if (kneeAngle < 110 && repState === "neutral") {
-              repState = "squatting";
-              repStatus.textContent = "Squatting";
-              repStatus.style.color = "var(--accent-yellow)";
-              if (timeSec - lastRepTime > 2.0) {
-                speakText("向下深蹲");
-              }
-            } else if (repState === "squatting" && kneeAngle > 150) {
-              // 站立起身大於 150 度完成一次
-              if (timeSec - lastRepTime > 1.0) {
-                repsCount++;
-                repDisplay.textContent = repsCount;
-                lastRepTime = timeSec;
-                repState = "returning";
-                repStatus.textContent = "Done";
-                repStatus.style.color = "var(--accent-green)";
-                
-                speakText(`第 ${repsCount} 下`);
-                
-                if (Math.abs(kneeAngle - SQUAT_TARGET_ANGLE) <= SQUAT_ANGLE_TOLERANCE) {
-                  speakText("深蹲標準");
-                } else {
-                  speakText("起立，注意下蹲深度");
-                }
-                updateSaveButtonState();
-              }
-            } else if (kneeAngle > 150) {
-              repState = "neutral";
-              repStatus.textContent = "Neutral";
-              repStatus.style.color = "var(--text-secondary)";
-            }
-
-            // --- 深蹲評分標準 (滿分 100) ---
-            let squatScore = 100;
-
-            // 1. 膝關節深蹲深度評分 (40 分)
-            if (Math.abs(kneeAngle - SQUAT_TARGET_ANGLE) <= SQUAT_ANGLE_TOLERANCE) {
-              // 角度落在 75 ~ 105 度間
-            } else if (kneeAngle < 75) {
-              squatScore -= Math.min(25, (75 - kneeAngle) * 1.5);
-              currentFeedback.push("下蹲過深，膝蓋壓力較大");
-              currentPerfect = false;
-            } else {
-              squatScore -= Math.min(30, (kneeAngle - 105) * 1.5);
-              currentFeedback.push("下蹲深度不足，請蹲低一點");
-              currentPerfect = false;
-            }
-
-            // 2. 手臂平舉平平行度評分 (30 分)
-            if (Math.abs(armAngle - 90) <= 20) {
-              // 70 ~ 110 度間
-            } else if (armAngle < 70) {
-              squatScore -= 15;
-              currentFeedback.push("雙手請向上平舉平行地面");
-              currentPerfect = false;
-            } else {
-              squatScore -= 15;
-              currentFeedback.push("手臂抬起過高");
-              currentPerfect = false;
-            }
-
-            // 3. 重心偏移評分 (30 分)
-            if (centerOffset < -COM_TOLERANCE_PX) {
-              centerOk = false;
-              squatScore -= 20;
-              currentFeedback.push("重心太靠前，請移向後腳跟");
-              currentPerfect = false;
-            } else if (centerOffset > w * 0.22) {
-              centerOk = false;
-              squatScore -= 20;
-              currentFeedback.push("重心太靠後，請稍微往前移");
-              currentPerfect = false;
-            }
-
-            currentScore = Math.max(0, squatScore);
-
-            // 即時語音提醒
-            if (!currentPerfect && timeSec - lastRepTime > 1.8) {
-              if (currentFeedback.length > 0) {
-                speakText(currentFeedback[0]);
-              }
-            }
-
-            // 更新數據看板指標
-            metricKneeAngle.textContent = `${Math.round(kneeAngle)}°`;
-            metricArmAngle.textContent = `${Math.round(armAngle)}°`;
-            metricComOffset.textContent = `${Math.round(centerOffset)}px`;
-            metricComOffset.style.color = centerOk ? "var(--text-primary)" : "var(--accent-red)";
-          }
-        }
-      } else if (activeMode === "sidebend") {
-        // =============== 3. 體側彎動作邏輯 ===============
-        const ls = lm[LS_ID];
-        const rs = lm[RS_ID];
-        const lh = lm[LH_ID];
-        const rh = lm[RH_ID];
-        const lk = lm[LK_ID];
-        const rk = lm[RK_ID];
-        const la = lm[LA_ID];
-        const ra = lm[RA_ID];
-        const lw = lm[LW_ID];
-        const rw = lm[RW_ID];
-
-        // 檢查關鍵關節可見度
-        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID, LA_ID, RA_ID];
-        let jointsVisible = true;
-        for (const idx of requiredJoints) {
-          if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
-            jointsVisible = false;
-            break;
-          }
-        }
-
-        if (!jointsVisible) {
-          metricSidebendAngle.textContent = "-";
-          metricSidebendDirection.textContent = "-";
-          metricSidebendHipShift.textContent = "-";
-          metricSidebendArmStatus.textContent = "-";
-          currentFeedback.push("關鍵關節（肩膀、臀部、腳踝）未完全入鏡，請退後使全身入鏡");
-          currentPerfect = false;
-          currentScore = 0;
-        } else {
-          // 計算肩膀中心、髖部中心、雙踝中心
-          const shoulderCenter = {
-            x: (ls.x + rs.x) / 2,
-            y: (ls.y + rs.y) / 2,
-            z: (ls.z + rs.z) / 2
-          };
-          const hipCenter = {
-            x: (lh.x + rh.x) / 2,
-            y: (lh.y + rh.y) / 2
-          };
-          const feetCenter = {
-            x: (la.x + ra.x) / 2,
-            y: (la.y + ra.y) / 2
-          };
-
-          // 側彎傾斜角度
-          const dx = shoulderCenter.x - hipCenter.x;
-          const dy = shoulderCenter.y - hipCenter.y; // 由於肩膀在上方，dy 為負數
-          const bendAngle = Math.atan2(Math.abs(dx), Math.abs(dy)) * (180.0 / Math.PI);
-
-          // 側彎方向判定
-          let bendDirection = "直立";
-          if (bendAngle >= 10) {
-            bendDirection = dx > 0 ? "向右側彎" : "向左側彎";
-          }
-
-          // 髖部左右偏移 (Hip Shift)
-          const hipShift = Math.abs(hipCenter.x - feetCenter.x);
-
-          // 身體前傾/扭轉檢測 (使用左右肩深度座標差值)
-          const shoulderZDiff = Math.abs(ls.z - rs.z);
-
-          // 手部上舉判定
-          let armStatus = "未上舉";
-          let isArmRaised = false;
-
-          if (bendDirection === "向右側彎") {
-            // 向右側彎時，左臂應上舉高於左肩
-            if (lw.y < ls.y) {
-              armStatus = "左手已上舉";
-              isArmRaised = true;
-            } else {
-              armStatus = "左手未抬高";
-            }
-          } else if (bendDirection === "向左側彎") {
-            // 向左側彎時，右臂應上舉高於右肩
-            if (rw.y < rs.y) {
-              armStatus = "右手已上舉";
-              isArmRaised = true;
-            } else {
-              armStatus = "右手未抬高";
-            }
-          }
-
-          const timeSec = Date.now() / 1000;
-
-          // --- 評分機制 (滿分 100) ---
-          let sidebendScore = 100;
-
-          // A. 側彎角度檢測 (40 分)
-          if (bendAngle >= 27 && bendAngle <= 43) {
-            // 合格
-          } else if (bendAngle < 27) {
-            if (bendAngle >= 10) {
-              sidebendScore -= Math.min(30, (27 - bendAngle) * 2.5);
-              currentFeedback.push("請再側彎一點");
-            } else {
-              sidebendScore -= 40;
-              currentFeedback.push("請左右傾斜身體進行體側彎");
-            }
-            currentPerfect = false;
-          } else {
-            sidebendScore -= Math.min(30, (bendAngle - 43) * 2.5);
-            currentFeedback.push("側彎角度過大，請稍回正");
-            currentPerfect = false;
-          }
-
-          // B. 手部上舉檢測 (25 分)
-          if (bendDirection !== "直立") {
-            if (isArmRaised) {
-              // 合格
-            } else {
-              sidebendScore -= 25;
-              currentFeedback.push(bendDirection === "向右側彎" ? "請將左手高舉過頭" : "請將右手高舉過頭");
-              currentPerfect = false;
-            }
-          } else {
-            sidebendScore -= 10;
-          }
-
-          // C. 骨盆移動穩定性 (20 分)
-          if (hipShift < 0.08) {
-            // 合格
-          } else {
-            sidebendScore -= 20;
-            currentFeedback.push("骨盆請維持置中，不要左右晃動");
-            currentPerfect = false;
-          }
-
-          // D. 身體前傾防旋轉檢測 (15 分)
-          if (shoulderZDiff < 0.12) {
-            // 合格
-          } else {
-            sidebendScore -= 15;
-            currentFeedback.push("胸口請正對鏡頭，不要扭轉前傾");
-            currentPerfect = false;
-          }
-
-          currentScore = Math.max(0, sidebendScore);
-
-          // --- 15 幀穩定達標次數累計 ---
-          const isPoseCorrect = currentScore >= 85 && (bendAngle >= 27 && bendAngle <= 43);
-
-          if (isPoseCorrect && isCameraActive) {
-            stableFrames++;
-            repStatus.textContent = `Hold: ${stableFrames}/15`;
-            repStatus.style.color = "var(--accent-yellow)";
-
-            if (stableFrames === 15) {
-              repsCount++;
-              repDisplay.textContent = repsCount;
-              repStatus.textContent = "PASS";
-              repStatus.style.color = "var(--accent-green)";
-              speakText(`側彎達標，第 ${repsCount} 下`);
-              updateSaveButtonState();
-            } else if (stableFrames > 15 && stableFrames % 30 === 0) {
-              speakText("非常好，保持住");
-            }
-          } else {
-            stableFrames = 0;
-            repStatus.textContent = bendDirection;
-            repStatus.style.color = "var(--text-secondary)";
-          }
-
-          // 即時語音矯正播報 (非維持狀態下)
-          if (!currentPerfect && timeSec - lastRepTime > 2.0 && stableFrames === 0) {
-            if (currentFeedback.length > 0) {
-              speakText(currentFeedback[0]);
-            }
-          }
-
-          // 更新指標元件數據
-          metricSidebendAngle.textContent = `${bendAngle.toFixed(1)}°`;
-          metricSidebendDirection.textContent = bendDirection;
-          metricSidebendHipShift.textContent = hipShift.toFixed(2);
-          metricSidebendArmStatus.textContent = armStatus;
-        }
-      }
-
-      cachedState.score = currentScore;
-      cachedState.feedback = currentFeedback;
-      cachedState.perfect = currentPerfect;
-
-      // Pushing to session scores for DB statistics
-      if (isCameraActive && repState !== "neutral") {
-        sessionScores.push(currentScore);
-      }
-    }
-  } else {
-    // 沒偵測到人體時，重設 Landmarks 快取
-    cachedState.landmarks = null;
-  }
-
-      // ================= 繪圖渲染與 UI 更新 (保證每一幀都繪製以防止閃爍) =================
-      updateDashboardUI();
-      drawPoseSkeleton(h, w);
-
-    } catch (error) {
-      console.error("Error in detectionLoop:", error);
-    }
-  }
-
-  // 遞迴呼叫下一幀
-  animationFrameId = requestAnimationFrame(detectionLoop);
-}
-
-// ================= 介面繪製與 UI 更新 =================
-function updateDashboardUI() {
-  // 指數平滑滾動分數，避免閃爍過快
-  if (cachedState.landmarks) {
-    displayedScore = displayedScore * 0.85 + cachedState.score * 0.15;
-  } else {
-    displayedScore = 100; // 重置
-  }
-  const roundedScore = Math.round(displayedScore);
-
-  scoreDisplay.textContent = roundedScore;
-  scoreBar.style.width = `${roundedScore}%`;
-  
-  // 動態調整分數顏色
-  if (roundedScore >= 85) {
-    scoreDisplay.className = "stat-value text-glow-green";
-    scoreBar.style.background = "linear-gradient(90deg, #10b981, #34d399)";
-  } else if (roundedScore >= 60) {
-    scoreDisplay.className = "stat-value text-glow-blue";
-    scoreBar.style.background = "linear-gradient(90deg, #3b82f6, #60a5fa)";
-  } else {
-    scoreDisplay.className = "stat-value";
-    scoreDisplay.style.color = "var(--accent-red)";
-    scoreDisplay.style.textShadow = "0 0 15px rgba(239, 68, 68, 0.5)";
-    scoreBar.style.background = "linear-gradient(90deg, #ef4444, #f87171)";
-  }
-
-  // 完美徽章狀態
-  if (cachedState.perfect && cachedState.landmarks) {
-    posePerfectBadge.classList.add("visible");
-  } else {
-    posePerfectBadge.classList.remove("visible");
-  }
-
-  // 警示訊息更新
-  if (!cachedState.landmarks) {
-    feedbackList.innerHTML = `<div class="feedback-placeholder">未偵測到人體 skeleton，請站入鏡頭中央...</div>`;
-  } else if (cachedState.feedback.length === 0) {
-    feedbackList.innerHTML = `
-      <div class="feedback-alert" style="background-color: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); color: #a7f3d0;">
-        姿態相當完美，請繼續保持！
-      </div>
-    `;
-  } else {
-    feedbackList.innerHTML = cachedState.feedback
-      .map(msg => `<div class="feedback-alert warning">${msg}</div>`)
-      .join("");
-  }
-}
-
-// 繪製骨架到 Canvas 上
-function drawPoseSkeleton(canvasH, canvasW) {
-  const lm = cachedState.landmarks;
-  if (!lm) return;
-
-  // 定義節點連線關係 (與 Python 原版對應)
-  let connections = [];
-  if (activeMode === "twist") {
-    connections = [
-      [LS_ID, RS_ID, "shoulder"], // 肩膀
-      [LH_ID, RH_ID, "hip"],      // 臀部
-      [LH_ID, LK_ID, "leg"],      // 左大腿
-      [LK_ID, LA_ID, "leg"],      // 左小腿
-      [RH_ID, RK_ID, "leg"],      // 右大腿
-      [RK_ID, RA_ID, "leg"]       // 右小腿
-    ];
-  } else if (activeMode === "squat") {
-    // 深蹲畫側身連線
-    const squatSide = metricSquatSide.textContent;
-    if (squatSide.includes("左側在前")) {
-      connections = [
-        [11, 23, "body"], // 肩至臀
-        [23, 25, "leg"],  // 臀至膝
-        [25, 27, "leg"],  // 膝至踝
-        [11, 13, "arm"],  // 肩至肘
-        [13, 15, "arm"]   // 肘至腕
-      ];
-    } else if (squatSide.includes("右側在前")) {
-      connections = [
-        [12, 24, "body"], // 肩至臀
-        [24, 26, "leg"],  // 臀至膝
-        [26, 28, "leg"],  // 膝至踝
-        [12, 14, "arm"],  // 肩至肘
-        [14, 16, "arm"]   // 肘至腕
-      ];
-    }
-  } else if (activeMode === "sidebend") {
-    // 體側彎畫正面連線與高舉的單側手臂
-    const bendDir = metricSidebendDirection.textContent;
-    connections = [
-      [LS_ID, RS_ID, "shoulder"], // 肩膀
-      [LH_ID, RH_ID, "hip"],      // 臀部
-      [11, 23, "body"],           // 左軀幹
-      [12, 24, "body"],           // 右軀幹
-      [23, 25, "leg"],            // 左大腿
-      [25, 27, "leg"],            // 左小腿
-      [24, 26, "leg"],            // 右大腿
-      [26, 28, "leg"]             // 右小腿
-    ];
-
-    if (bendDir.includes("向右側彎")) {
-      connections.push([11, 13, "arm"], [13, 15, "arm"]);
-    } else if (bendDir.includes("向左側彎")) {
-      connections.push([12, 14, "arm"], [14, 16, "arm"]);
-    } else {
-      // 直立時繪製兩側手臂
-      connections.push([11, 13, "arm"], [13, 15, "arm"], [12, 14, "arm"], [14, 16, "arm"]);
-    }
-  }
-
-  // 1. 繪製骨架骨骼連線
-  connections.forEach(([p1_idx, p2_idx, type]) => {
-    const pt1 = lm[p1_idx];
-    const pt2 = lm[p2_idx];
-    
-    if (pt1 && pt2) {
-      ctx.beginPath();
-      ctx.moveTo(pt1.x * canvasW, pt1.y * canvasH);
-      ctx.lineTo(pt2.x * canvasW, pt2.y * canvasH);
-      
-      // 根據骨架類型設定發光霓虹線條
-      if (type === "shoulder") {
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
-        ctx.lineWidth = 4;
-      } else if (type === "hip") {
-        ctx.strokeStyle = "rgba(0, 255, 0, 0.8)";
-        ctx.lineWidth = 4;
-      } else {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
-        ctx.lineWidth = 3;
-      }
-      ctx.shadowBlur = 4;
-      ctx.shadowColor = ctx.strokeStyle;
-      ctx.stroke();
-    }
-  });
-  
-  // 恢復陰影設定，避免影響效能
-  ctx.shadowBlur = 0;
-
-  // 2. 標示關鍵關節點圓圈
-  const keyJoints = activeMode === "twist" 
-    ? [LS_ID, RS_ID, LH_ID, RH_ID, LK_ID, RK_ID, LA_ID, RA_ID]
-    : (activeMode === "squat" 
-      ? [11, 12, 23, 24, 25, 26, 27, 28, 13, 14, 15, 16]
-      : [LS_ID, RS_ID, LH_ID, RH_ID, LK_ID, RK_ID, LA_ID, RA_ID, LW_ID, RW_ID]); // 體側彎加入雙手腕
-
-  keyJoints.forEach(idx => {
-    const pt = lm[idx];
-    if (pt) {
-      ctx.beginPath();
-      ctx.arc(pt.x * canvasW, pt.y * canvasH, 6, 0, 2 * Math.PI);
-      
-      // 依據目前分數動態決定關節點發光顏色
-      ctx.fillStyle = cachedState.score >= 85 ? "#10b981" : (cachedState.score >= 60 ? "#3b82f6" : "#ef4444");
-      ctx.fill();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-  });
-}
-
-// ================= 事件處理與模式切換 =================
-
-// 切換教練模式
-function switchMode(mode) {
-  if (activeMode === mode) return;
-  activeMode = mode;
-  
-  // 重設計數狀態
-  repsCount = 0;
-  repDisplay.textContent = repsCount;
-  repState = "neutral";
-  repStatus.textContent = "Neutral";
-  repStatus.style.color = "var(--text-secondary)";
-  angleBuffer.length = 0;
-  ratioBuffer.length = 0;
-  stableFrames = 0;
-  sessionScores = [];
-  sessionStartTime = Date.now();
-  updateSaveButtonState();
-
-  // DOM 可見性切換
-  if (mode === "twist") {
-    btnTwist.classList.add("active");
-    btnSquat.classList.remove("active");
-    btnSidebend.classList.remove("active");
-    
-    document.querySelectorAll(".twist-only").forEach(el => el.classList.remove("hidden"));
-    document.querySelectorAll(".squat-only").forEach(el => el.classList.add("hidden"));
-    document.querySelectorAll(".sidebend-only").forEach(el => el.classList.add("hidden"));
-    
-    guideTwist.classList.remove("hidden");
-    guideSquat.classList.add("hidden");
-    guideSidebend.classList.add("hidden");
-    speakText("已切換為扭腰訓練模式");
-  } else if (mode === "squat") {
-    btnTwist.classList.remove("active");
-    btnSquat.classList.add("active");
-    btnSidebend.classList.remove("active");
-    
-    document.querySelectorAll(".twist-only").forEach(el => el.classList.add("hidden"));
-    document.querySelectorAll(".squat-only").forEach(el => el.classList.remove("hidden"));
-    document.querySelectorAll(".sidebend-only").forEach(el => el.classList.add("hidden"));
-    
-    guideTwist.classList.add("hidden");
-    guideSquat.classList.remove("hidden");
-    guideSidebend.classList.add("hidden");
-    speakText("已切換為深蹲檢測模式，請轉向側面");
-  } else if (mode === "sidebend") {
-    btnTwist.classList.remove("active");
-    btnSquat.classList.remove("active");
-    btnSidebend.classList.add("active");
-    
-    document.querySelectorAll(".twist-only").forEach(el => el.classList.add("hidden"));
-    document.querySelectorAll(".squat-only").forEach(el => el.classList.add("hidden"));
-    document.querySelectorAll(".sidebend-only").forEach(el => el.classList.remove("hidden"));
-    
-    guideTwist.classList.add("hidden");
-    guideSquat.classList.add("hidden");
-    guideSidebend.classList.remove("hidden");
-    speakText("已切換為體側彎檢測模式，請正面對相機");
-  }
-  
-  if (activeUser) {
-    updatePersonalizedCoachTip();
-  }
-}
-
-// 相機鏡像調整
-function handleMirrorToggle() {
-  if (chkMirror.checked) {
-    webcamElement.classList.add("mirror-y");
-    canvasElement.classList.add("mirror-y");
-  } else {
-    webcamElement.classList.remove("mirror-y");
-    canvasElement.classList.remove("mirror-y");
-  }
-}
-
-// ================= 資料庫 API 串接與數據庫更新 =================
-
-function updateSaveButtonState() {
-  if (activeUser && repsCount > 0) {
-    btnSaveSession.classList.remove("btn-disabled");
-    btnSaveSession.disabled = false;
-  } else {
-    btnSaveSession.classList.add("btn-disabled");
-    btnSaveSession.disabled = true;
-  }
-}
-
-// ================= 使用者登入/註冊控制 =================
-const loginOverlay = document.getElementById("login-overlay");
-const loginView = document.getElementById("login-view");
-const registerView = document.getElementById("register-view");
-const loginUsernameInput = document.getElementById("login-username");
-const loginErrorMsg = document.getElementById("login-error");
-const btnLoginSubmit = document.getElementById("btn-login-submit");
-
-const registerUsernameDisplay = document.getElementById("register-username-display");
-const registerAgeInput = document.getElementById("register-age");
-const registerHeightInput = document.getElementById("register-height");
-const registerWeightInput = document.getElementById("register-weight");
-const registerErrorMsg = document.getElementById("register-error");
-const btnRegisterSubmit = document.getElementById("btn-register-submit");
-const btnRegisterBack = document.getElementById("btn-register-back");
-
-const lblHeaderUsername = document.getElementById("lbl-header-username");
-const lblHeaderProfile = document.getElementById("lbl-header-profile");
-const btnLogout = document.getElementById("btn-logout");
-
-const isAlphanumeric = (str) => /^[a-zA-Z0-9]+$/.test(str);
-
-async function checkSilentLogin() {
-  const savedUsername = localStorage.getItem("fitness_active_username");
-  if (savedUsername) {
-    try {
-      const res = await fetch("/api/users/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: savedUsername })
-      });
-      const data = await res.json();
-      if (data.exists) {
-        logInUser(data.user);
+// --- 會員系統對接 (FastAPI API) ---
+const API_BASE = ""; // 本地相對路徑
+
+// 會員註冊
+document.getElementById("btn-register").addEventListener("click", async () => {
+    const username = document.getElementById("reg-username").value.trim();
+    const password = document.getElementById("reg-password").value.trim();
+    const age = parseInt(document.getElementById("reg-age").value);
+    const gender = document.getElementById("reg-gender").value;
+    const height = parseFloat(document.getElementById("reg-height").value);
+    const weight = parseFloat(document.getElementById("reg-weight").value);
+
+    if (!username || !password) {
+        alert("請輸入帳號密碼！");
         return;
-      }
-    } catch (err) {
-      console.error("自動登入失敗:", err);
     }
-  }
-  showLoginOverlay();
-}
 
-function showLoginOverlay() {
-  loginOverlay.classList.remove("hidden");
-  loginView.classList.remove("hidden");
-  registerView.classList.add("hidden");
-  loginUsernameInput.value = "";
-  loginErrorMsg.classList.add("hidden");
-  
-  // Disable camera toggle when not logged in
-  btnToggleCamera.classList.add("btn-disabled");
-  btnToggleCamera.disabled = true;
-  if (isCameraActive) stopCamera();
-}
-
-function logInUser(user) {
-  activeUser = user;
-  localStorage.setItem("fitness_active_user_id", user.id);
-  localStorage.setItem("fitness_active_username", user.username);
-  
-  lblHeaderUsername.textContent = user.username;
-  const profileDetails = (user.age && user.height && user.weight) 
-    ? `(${user.age}歲 | ${user.height}cm | ${user.weight}kg)` 
-    : "";
-  lblHeaderProfile.textContent = profileDetails;
-  lblActiveUser.textContent = user.username;
-  
-  // Load stats and dashboard logs
-  loadDashboardData(user.id);
-  updateSaveButtonState();
-  
-  // Hide login overlay
-  loginOverlay.classList.add("hidden");
-  
-  // Enable camera button if model is loaded
-  if (poseLandmarker) {
-    btnToggleCamera.classList.remove("btn-disabled");
-    btnToggleCamera.disabled = false;
-  }
-}
-
-async function handleLogin() {
-  const username = loginUsernameInput.value.trim();
-  if (!username) {
-    loginErrorMsg.textContent = "請輸入使用者帳號！";
-    loginErrorMsg.classList.remove("hidden");
-    return;
-  }
-  if (!isAlphanumeric(username)) {
-    loginErrorMsg.textContent = "帳號格式錯誤：只能包含英數字！";
-    loginErrorMsg.classList.remove("hidden");
-    return;
-  }
-  
-  loginErrorMsg.classList.add("hidden");
-  try {
-    const res = await fetch("/api/users/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username })
-    });
-    const data = await res.json();
-    if (res.status !== 200) {
-      loginErrorMsg.textContent = data.error || "連線伺服器失敗";
-      loginErrorMsg.classList.remove("hidden");
-      return;
-    }
-    
-    if (data.exists) {
-      logInUser(data.user);
-      speakText(`歡迎回來，${data.user.username}`);
-    } else {
-      // Transition to registration view
-      loginView.classList.add("hidden");
-      registerView.classList.remove("hidden");
-      registerUsernameDisplay.value = username;
-      registerAgeInput.value = "";
-      registerHeightInput.value = "";
-      registerWeightInput.value = "";
-      registerErrorMsg.classList.add("hidden");
-    }
-  } catch (err) {
-    console.error("登入錯誤:", err);
-    loginErrorMsg.textContent = "登入發生錯誤，請稍候再試。";
-    loginErrorMsg.classList.remove("hidden");
-  }
-}
-
-async function handleRegister() {
-  const username = registerUsernameDisplay.value.trim();
-  const age = registerAgeInput.value.trim();
-  const height = registerHeightInput.value.trim();
-  const weight = registerWeightInput.value.trim();
-  
-  if (!age || !height || !weight) {
-    registerErrorMsg.textContent = "請填寫所有個人資料欄位！";
-    registerErrorMsg.classList.remove("hidden");
-    return;
-  }
-  if (parseInt(age) < 1 || parseInt(age) > 120) {
-    registerErrorMsg.textContent = "請輸入有效的年齡 (1-120歲)！";
-    registerErrorMsg.classList.remove("hidden");
-    return;
-  }
-  if (parseFloat(height) < 50 || parseFloat(height) > 250) {
-    registerErrorMsg.textContent = "請輸入有效的身高 (50-250公分)！";
-    registerErrorMsg.classList.remove("hidden");
-    return;
-  }
-  if (parseFloat(weight) < 10 || parseFloat(weight) > 300) {
-    registerErrorMsg.textContent = "請輸入有效的體重 (10-300公斤)！";
-    registerErrorMsg.classList.remove("hidden");
-    return;
-  }
-  
-  registerErrorMsg.classList.add("hidden");
-  try {
-    const res = await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, age, height, weight })
-    });
-    const data = await res.json();
-    if (res.status === 201) {
-      logInUser(data);
-      speakText(`註冊成功，歡迎使用系統，${data.username}`);
-    } else {
-      registerErrorMsg.textContent = data.error || "註冊失敗";
-      registerErrorMsg.classList.remove("hidden");
-    }
-  } catch (err) {
-    console.error("註冊錯誤:", err);
-    registerErrorMsg.textContent = "註冊請求錯誤，請稍候再試。";
-    registerErrorMsg.classList.remove("hidden");
-  }
-}
-
-function handleLogout() {
-  localStorage.removeItem("fitness_active_user_id");
-  localStorage.removeItem("fitness_active_username");
-  activeUser = null;
-  
-  lblHeaderUsername.textContent = "";
-  lblHeaderProfile.textContent = "";
-  lblActiveUser.textContent = "尚未選擇";
-  
-  // Clear stats UI
-  dbTotalWorkouts.textContent = "0";
-  dbTotalReps.textContent = "0";
-  dbAvgScore.textContent = "0分";
-  historyTableBody.innerHTML = `
-    <tr>
-      <td colspan="6" class="table-empty">請先登入使用者以載入歷史紀錄</td>
-    </tr>
-  `;
-  if (trendChartInstance) {
-    trendChartInstance.destroy();
-    trendChartInstance = null;
-  }
-  personalizedCoachTip.classList.add("hidden");
-  
-  showLoginOverlay();
-}
-
-async function loadDashboardData(userId) {
-  try {
-    // 1. Fetch stats
-    const statsRes = await fetch(`/api/stats?user_id=${userId}`);
-    const stats = await statsRes.json();
-    userStats = stats; // store globally
-    
-    dbTotalWorkouts.textContent = stats.total_workouts;
-    dbTotalReps.textContent = stats.total_reps;
-    dbAvgScore.textContent = `${stats.avg_score}分`;
-
-    // 2. Fetch history logs table
-    const workoutsRes = await fetch(`/api/workouts?user_id=${userId}`);
-    const workouts = await workoutsRes.json();
-    
-    renderHistoryTable(workouts);
-
-    // 3. Render/Update Trend Chart
-    renderTrendChart(stats.recent);
-
-    // 4. Update coaching tip
-    updatePersonalizedCoachTip();
-  } catch (err) {
-    console.error('載入儀表板數據失敗:', err);
-  }
-}
-
-// ================= 個人化 AI 教練分析推薦系統 =================
-function generatePersonalizedTip(stats, mode) {
-  const modeStats = stats.by_mode[mode];
-  if (!modeStats || modeStats.count === 0) {
-    return {
-      text: "這是你首次進行此項訓練，請跟隨下方的指導方針，保持穩定與規律的呼吸開始吧！",
-      voice: "這是你首次進行此項訓練，請跟隨下方的指導方針，保持穩定與規律的呼吸開始吧！"
-    };
-  }
-
-  const avg = modeStats.avg_score;
-  const count = modeStats.count;
-  
-  // 篩選此模式的歷史紀錄以分析趨勢
-  const modeRecent = stats.recent.filter(w => w.mode === mode);
-  
-  let trendText = "";
-  let voiceText = "";
-
-  if (modeRecent.length >= 2) {
-    const last = modeRecent[modeRecent.length - 1].avg_score;
-    const prev = modeRecent[modeRecent.length - 2].avg_score;
-    if (last > prev + 4) {
-      trendText = `📈 上次訓練動作比前一次進步了 ${Math.round(last - prev)} 分！做得很好！`;
-      voiceText = `你上次的動作有明顯進步，做得很好！`;
-    } else if (last < prev - 5) {
-      trendText = `⚠️ 上次分數有所下滑，請特別注意姿勢維持。`;
-      voiceText = `上次訓練分數有所下滑，今天請特別注意姿勢標準度。`;
-    }
-  }
-
-  if (avg >= 88) {
-    return {
-      text: `歷史表現特優（平均 ${avg} 分，已完成 ${count} 次）。${trendText || "你的動作水準非常高，今天也請維持完美體態！"}`,
-      voice: `你的歷史表現特優，平均分數達 ${avg} 分，今天請繼續維持完美體態！`
-    };
-  } else if (avg >= 70) {
-    let focusMsg = "";
-    if (mode === "twist") {
-      focusMsg = "扭扭腰時請著重在「肩膀與骨盆保持水平」，避免歪斜。";
-    } else if (mode === "squat") {
-      focusMsg = "進行深蹲時請著重在「屁股往後坐，重心壓腳跟」。";
-    } else if (mode === "sidebend") {
-      focusMsg = "體側彎時請注意「骨盆置中」且「手臂拉直高舉過頭」。";
-    }
-    return {
-      text: `表現穩定（平均 ${avg} 分，已完成 ${count} 次）。教練建議：${focusMsg} ${trendText}`,
-      voice: `你目前平均分數為 ${avg} 分。教練建議：${focusMsg} ${voiceText}`
-    };
-  } else {
-    let focusMsg = "";
-    if (mode === "twist") {
-      focusMsg = "扭腰幅度可能太大或速度過快，請放慢速度，專注在腰腹核心水平扭轉。";
-    } else if (mode === "squat") {
-      focusMsg = "深蹲重心容易前傾且深度不夠，請側身站立，重心往腳跟移動，蹲低至接近90度。";
-    } else if (mode === "sidebend") {
-      focusMsg = "體側彎時胸口請朝向正前方，不要扭轉，單臂高舉貼近耳朵側彎。";
-    }
-    return {
-      text: `加油！目前平均 ${avg} 分。教練特訓重點：${focusMsg}`,
-      voice: `加油！你目前平均分數為 ${avg} 分。教練特別建議：${focusMsg}`
-    };
-  }
-}
-
-function updatePersonalizedCoachTip() {
-  if (!activeUser || !userStats) {
-    personalizedCoachTip.classList.add("hidden");
-    return;
-  }
-
-  const tip = generatePersonalizedTip(userStats, activeMode);
-  coachTipText.textContent = tip.text;
-  personalizedCoachTip.classList.remove("hidden");
-  
-  // 延遲撥報讓切換模式的 TTS 完成
-  setTimeout(() => {
-    speakText(tip.voice);
-  }, 1500);
-}
-
-function renderHistoryTable(workouts) {
-  if (workouts.length === 0) {
-    historyTableBody.innerHTML = `
-      <tr>
-        <td colspan="6" class="table-empty">目前尚無訓練紀錄，請開始進行訓練！</td>
-      </tr>
-    `;
-    return;
-  }
-
-  historyTableBody.innerHTML = workouts.map(w => {
-    const date = new Date(w.created_at).toLocaleString('zh-TW', {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-    const modeName = readableModeNames[w.mode] || w.mode;
-    const scoreClass = w.avg_score >= 85 ? 'text-glow-green' : (w.avg_score >= 60 ? 'text-glow-blue' : 'text-danger');
-    return `
-      <tr>
-        <td>${date}</td>
-        <td>${modeName}</td>
-        <td>${w.reps}</td>
-        <td><span class="${scoreClass}">${w.avg_score}分</span></td>
-        <td>${w.duration_seconds}</td>
-        <td>
-          <button class="btn-delete-log" data-id="${w.id}" title="刪除紀錄">✕</button>
-        </td>
-      </tr>
-    `;
-  }).join('');
-
-  // Attach delete listeners
-  document.querySelectorAll('.btn-delete-log').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const id = e.currentTarget.getAttribute('data-id');
-      if (confirm('確定要刪除這筆訓練紀錄嗎？')) {
-        try {
-          const res = await fetch(`/api/workouts/${id}`, { method: 'DELETE' });
-          if (res.ok) {
-            speakText('紀錄已刪除');
-            loadDashboardData(activeUser.id);
-          }
-        } catch (err) {
-          console.error('刪除訓練紀錄失敗:', err);
+    try {
+        const res = await fetch(`${API_BASE}/api/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password, age, height, weight, gender })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert("註冊成功！系統將自動為您登入。");
+            performLogin(username, password);
+        } else {
+            alert(`註冊失敗: ${data.detail}`);
         }
-      }
-    });
-  });
-}
-
-function renderTrendChart(recentWorkouts) {
-  const ctxChart = document.getElementById('score-trend-chart').getContext('2d');
-  
-  // Destroy existing chart to avoid overlay issues
-  if (trendChartInstance) {
-    trendChartInstance.destroy();
-  }
-
-  if (!recentWorkouts || recentWorkouts.length === 0) {
-    // Draw empty state
-    trendChartInstance = new Chart(ctxChart, {
-      type: 'line',
-      data: {
-        labels: ['無數據'],
-        datasets: [{
-          label: '動作分數',
-          data: [0],
-          borderColor: 'rgba(255, 255, 255, 0.1)',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false }
-        },
-        scales: {
-          y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8' } },
-          x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8' } }
-        }
-      }
-    });
-    return;
-  }
-
-  const labels = recentWorkouts.map(w => {
-    const d = new Date(w.created_at);
-    return `${d.getMonth() + 1}/${d.getDate()} ${readableModeNames[w.mode] || w.mode}`;
-  });
-  const scores = recentWorkouts.map(w => w.avg_score);
-  const reps = recentWorkouts.map(w => w.reps);
-
-  trendChartInstance = new Chart(ctxChart, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [
-        {
-          label: '動作分數',
-          data: scores,
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.1)',
-          borderWidth: 3,
-          tension: 0.3,
-          fill: true,
-          yAxisID: 'y'
-        },
-        {
-          label: '動作次數 (Reps)',
-          data: reps,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.05)',
-          borderWidth: 2,
-          borderDash: [5, 5],
-          tension: 0.3,
-          yAxisID: 'y1'
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        y: {
-          type: 'linear',
-          position: 'left',
-          min: 0,
-          max: 100,
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: { color: '#94a3b8' }
-        },
-        y1: {
-          type: 'linear',
-          position: 'right',
-          grid: { drawOnChartArea: false },
-          ticks: { color: '#94a3b8' }
-        },
-        x: {
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: { color: '#94a3b8' }
-        }
-      },
-      plugins: {
-        legend: {
-          labels: { color: '#f1f5f9' }
-        }
-      }
+    } catch (e) {
+        alert("伺服器連線失敗");
     }
-  });
-}
-
-async function saveWorkoutSession() {
-  if (!activeUser) {
-    alert('請先選擇或新增使用者！');
-    return;
-  }
-  if (repsCount === 0) {
-    alert('請先開始動作偵測並完成至少一次訓練！');
-    return;
-  }
-
-  // Calculate session stats
-  const avgScore = sessionScores.length > 0
-    ? Math.round(sessionScores.reduce((a, b) => a + b, 0) / sessionScores.length)
-    : cachedState.score; // Fallback to current score
-  const durationSeconds = sessionStartTime
-    ? Math.round((Date.now() - sessionStartTime) / 1000)
-    : 0;
-
-  const payload = {
-    user_id: activeUser.id,
-    mode: activeMode,
-    reps: repsCount,
-    avg_score: avgScore,
-    duration_seconds: durationSeconds
-  };
-
-  try {
-    const res = await fetch('/api/workouts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      // Speak success message
-      speakText(`訓練成功儲存！共完成 ${repsCount} 下，平均 ${avgScore} 分`);
-
-      // Populate and show success modal
-      modalSummaryMode.textContent = readableModeNames[activeMode] || activeMode;
-      modalSummaryReps.textContent = `${repsCount} 下`;
-      modalSummaryScore.textContent = `${avgScore} 分`;
-      saveSuccessModal.classList.remove('hidden');
-
-      // Reset trackers for the next session
-      repsCount = 0;
-      repDisplay.textContent = repsCount;
-      sessionScores = [];
-      sessionStartTime = Date.now(); // reset start timer
-      updateSaveButtonState();
-
-      // Refresh database dashboard
-      loadDashboardData(activeUser.id);
-    } else {
-      alert('儲存訓練紀錄失敗，請確認伺服器狀態。');
-    }
-  } catch (err) {
-    console.error('儲存訓練錯誤:', err);
-    alert('儲存訓練錯誤，請確認網路連線是否正常。');
-  }
-}
-
-// 綁定事件監聽
-btnToggleCamera.addEventListener("click", toggleCamera);
-chkMirror.addEventListener("change", handleMirrorToggle);
-btnTwist.addEventListener("click", () => switchMode("twist"));
-btnSquat.addEventListener("click", () => switchMode("squat"));
-btnSidebend.addEventListener("click", () => switchMode("sidebend"));
-
-// 網頁準備就緒後啟動
-function initApp() {
-  handleMirrorToggle();
-  // 禁用開機按鈕直到模型載入完畢
-  btnToggleCamera.classList.add("btn-disabled");
-  btnToggleCamera.disabled = true;
-  initPoseModel();
-
-  // Check silent login or show login overlay
-  checkSilentLogin();
-
-  // Bind Login / Register Event Listeners
-  btnLoginSubmit.addEventListener("click", handleLogin);
-  loginUsernameInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") handleLogin();
-  });
-  btnRegisterSubmit.addEventListener("click", handleRegister);
-  btnRegisterBack.addEventListener("click", () => {
-    registerView.classList.add("hidden");
-    loginView.classList.remove("hidden");
-    loginUsernameInput.focus();
-  });
-  btnLogout.addEventListener("click", handleLogout);
-
-  btnSaveSession.addEventListener('click', saveWorkoutSession);
-  btnCloseModal.addEventListener('click', () => {
-    saveSuccessModal.classList.add('hidden');
-  });
-}
-
-if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", initApp);
-} else {
-  initApp();
-}
-
-// 當離開頁面時自動清理資源
-window.addEventListener("beforeunload", () => {
-  stopCamera();
 });
+
+// 會員登入
+document.getElementById("btn-login").addEventListener("click", () => {
+    const username = document.getElementById("login-username").value.trim();
+    const password = document.getElementById("login-password").value.trim();
+    if (!username || !password) {
+        alert("請輸入帳號密碼！");
+        return;
+    }
+    performLogin(username, password);
+});
+
+// 切換表單
+document.getElementById("go-to-register").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("login-section").classList.add("hidden");
+    document.getElementById("register-section").classList.remove("hidden");
+});
+
+document.getElementById("go-to-login").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("register-section").classList.add("hidden");
+    document.getElementById("login-section").classList.remove("hidden");
+});
+
+async function performLogin(username, password) {
+    try {
+        const res = await fetch(`${API_BASE}/api/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            currentUser = data.user;
+            authModal.classList.add("hidden");
+            alert(`歡迎回來，${currentUser.username}！`);
+            currentAppState = STATE_MENU;
+            loadUserDashboard();
+            if (isTVOn) {
+                showMenuScreen();
+            }
+        } else {
+            alert(`登入失敗: ${data.detail}`);
+        }
+    } catch (e) {
+        alert("伺服器連線失敗");
+    }
+}
+
+// 登入後載入相關統計、動作最高分與動態閾值
+async function loadUserDashboard() {
+    if (!currentUser) return;
+    
+    // 初始化 High Scores 顯示
+    for (let i = 0; i <= 8; i++) {
+        const cardScore = document.getElementById(`high-score-${i}`);
+        if (cardScore) cardScore.textContent = "HI: --";
+    }
+
+    // 1. 獲取個人歷史紀錄與高分
+    try {
+        const res = await fetch(`${API_BASE}/api/user_stats?user_id=${currentUser.id}`);
+        const data = await res.json();
+        if (res.ok) {
+            // 更新底部表格
+            const tbody = document.getElementById("stats-body");
+            tbody.innerHTML = "";
+            if (data.summary.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="text-center">尚無運動紀錄，請點選上方卡片開始練習！</td></tr>`;
+            } else {
+                data.summary.forEach(row => {
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td>${row.movement_name}</td>
+                        <td>${Math.round(row.avg_score)}% (HI: ${Math.round(row.max_score)}%)</td>
+                        <td>${row.sessions}次</td>
+                        <td>${row.total_duration}秒</td>
+                    `;
+                    tbody.appendChild(tr);
+
+                    // 同步更新關卡選單上的 High Score (HI)
+                    const cardScore = document.getElementById(`high-score-${row.movement_index}`);
+                    if (cardScore) {
+                        cardScore.textContent = `HI: ${Math.round(row.max_score)}%`;
+                    }
+                });
+            }
+        }
+    } catch (e) {
+        console.error("無法取得歷史統計資料:", e);
+    }
+
+    // 2. 獲取自適應 AI 閥值
+    try {
+        const res = await fetch(`${API_BASE}/api/thresholds?age=${currentUser.age}`);
+        const data = await res.json();
+        if (res.ok) {
+            configThresholds.squat_tolerance = data.squat_tolerance;
+            configThresholds.arm_tolerance = data.arm_tolerance;
+            configThresholds.twist_tolerance = data.twist_tolerance;
+            
+            document.getElementById("ai-group").textContent = data.group === "age_60+" ? "長青優化組 (60歲+)" : (data.group === "age_under_18" ? "青春精準組 (<18歲)" : "一般標準組");
+            document.getElementById("t-val-squat").textContent = `±${data.squat_tolerance}°`;
+            document.getElementById("t-val-arm").textContent = `±${data.arm_tolerance}°`;
+            document.getElementById("t-val-twist").textContent = `±${data.twist_tolerance}°`;
+        }
+    } catch (e) {
+        console.error("無法取得自適應閥值:", e);
+    }
+}
+
+// 分節運動數據上傳
+async function uploadStageResult(stageIndex, avgScore) {
+    if (!currentUser) return;
+    const duration = Math.round((Date.now() - stageStartTime) / 1000);
+    try {
+        await fetch(`${API_BASE}/api/upload_segment`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                user_id: currentUser.id,
+                movement_index: stageIndex,
+                movement_name: STAGES[stageIndex].name,
+                match_score: avgScore,
+                duration_sec: duration
+            })
+        });
+        console.log(`Uploaded stage ${stageIndex} score: ${avgScore}%`);
+        // 上傳後自動重新整理面板的統計與 High Score
+        loadUserDashboard();
+    } catch (e) {
+        console.error("數據上傳失敗", e);
+    }
+}
+
+// --- 電視開關與選單切換控制 ---
+
+btnPower.addEventListener("click", () => {
+    if (!currentUser) {
+        alert("請先完成登入！");
+        return;
+    }
+    togglePower();
+});
+
+function togglePower() {
+    isTVOn = !isTVOn;
+    if (isTVOn) {
+        powerLed.classList.add("on");
+        document.getElementById("main-screen").style.filter = "none";
+        
+        // 進入動作選擇主選單
+        showMenuScreen();
+    } else {
+        powerLed.classList.remove("on");
+        // 關機特效
+        document.getElementById("main-screen").style.filter = "brightness(0) contrast(0)";
+        
+        // 銷毀所有正在進行的練習資源，釋放相機與模型記憶體
+        stopWorkoutAndRelease();
+        tvMenuScreen.classList.add("hidden");
+        tvWorkoutScreen.classList.add("hidden");
+    }
+}
+
+// 顯示動作選擇選單
+function showMenuScreen() {
+    currentAppState = STATE_MENU;
+    tvWorkoutScreen.classList.add("hidden");
+    tvMenuScreen.classList.remove("hidden");
+    
+    // 旋鈕歸零 (預備)
+    knobChannel.style.transform = "rotate(0deg)";
+}
+
+// 設定主選單關卡卡片的點擊事件
+document.querySelectorAll(".stage-card").forEach(card => {
+    card.addEventListener("click", () => {
+        if (!isTVOn || currentAppState !== STATE_MENU) return;
+        
+        const stageIndex = parseInt(card.getAttribute("data-stage"));
+        currentStageIndex = stageIndex;
+        window.currentStageIndex = stageIndex; // 提供 synth.js 讀取
+        
+        // 切換至鍛鍊畫面
+        currentAppState = STATE_WORKOUT;
+        tvMenuScreen.classList.add("hidden");
+        tvWorkoutScreen.classList.remove("hidden");
+
+        // 旋轉 Channel 旋鈕作為開關特效
+        knobChannel.style.transform = `rotate(${stageIndex * 40}deg)`;
+
+        // 啟動相機、AI 與音樂
+        startWorkout();
+    });
+});
+
+// 點擊返回選單按鈕
+btnBackToMenu.addEventListener("click", () => {
+    if (currentAppState === STATE_WORKOUT) {
+        stopWorkoutAndRelease();
+        showMenuScreen();
+    }
+});
+
+// 音量旋鈕拖曳控制
+let isDraggingVolume = false;
+knobVolume.addEventListener("mousedown", (e) => { isDraggingVolume = true; });
+document.addEventListener("mouseup", () => { isDraggingVolume = false; });
+document.addEventListener("mousemove", (e) => {
+    if (isDraggingVolume && isTVOn) {
+        const rect = knobVolume.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const angle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+        knobVolume.style.transform = `rotate(${angle}deg)`;
+        
+        let vol = (angle + 180) / 360;
+        window.gymSynth.setVolume(vol);
+    }
+});
+
+// --- 動態相機與 AI 資源管理 (核心優化) ---
+
+function startWorkout() {
+    // 1. 動態初始化 MediaPipe Pose (若先前已釋放為 null)
+    if (!pose) {
+        initPoseDetection();
+    }
+
+    // 2. 啟動鏡頭串流
+    startWebcam();
+
+    // 3. 初始化數據與時間
+    currentScore = 0;
+    currentBeat = 0;
+    currentSection = 1;
+    stageScores = [];
+    stageStartTime = Date.now();
+    smoothedMatchPct = 0;
+    lastUiUpdateTime = 0;
+
+    updateUIForStage();
+    workoutBeatProgress.textContent = "BEATS: 0/16";
+
+    // 4. 啟動音樂伴奏與口令
+    window.gymSynth.start();
+}
+
+function stopWorkoutAndRelease() {
+    // 1. 停止音樂播放
+    window.gymSynth.stop();
+
+    // 2. 停止並關閉鏡頭，釋放影像緩衝區
+    stopWebcam();
+
+    // 3. 徹底銷毀 MediaPipe Pose 實例以釋放 WebGL 與 WASM 核心記憶體 (重要！)
+    if (pose) {
+        console.log("Tearing down MediaPipe Pose Engine to free RAM...");
+        try {
+            pose.close();
+        } catch (e) {
+            console.error("Error closing Pose engine:", e);
+        }
+        pose = null; // 設為 null 供垃圾回收 (Garbage Collection)
+    }
+
+    // 4. 重設前端 UI 文字與進度條
+    ledMatchPct.textContent = "0%";
+    ledMatchPct.className = "led-val";
+    ledScore.textContent = "000000";
+    matchBar.style.width = "0%";
+    poseWarning.classList.add("hidden");
+    
+    // 清除畫布
+    ctxPlayer.clearRect(0, 0, canvasPlayer.width, canvasPlayer.height);
+    ctxCoach.clearRect(0, 0, canvasCoach.width, canvasCoach.height);
+}
+
+function startWebcam() {
+    // 設定畫布與畫面的寬高
+    canvasPlayer.width = canvasPlayer.parentElement.clientWidth;
+    canvasPlayer.height = 360;
+    canvasCoach.width = canvasCoach.parentElement.clientWidth;
+    canvasCoach.height = 360;
+
+    // 將鏡頭寬高設定為 320x240 (減半解析度，大幅節省視訊緩衝區 RAM)
+    camera = new Camera(videoElement, {
+        onFrame: async () => {
+            if (isTVOn && currentAppState === STATE_WORKOUT) {
+                const now = Date.now();
+                // 節流 (Throttle)：限制每 150ms 運算一次 (約 6.6 FPS)
+                // 6.6 FPS 在 60 BPM 健康操下足夠精確，且可降低 80% 的手機 CPU/GPU 與記憶體耗損！
+                if (now - lastFrameTime > 150) {
+                    lastFrameTime = now;
+                    if (pose) {
+                        await pose.send({ image: videoElement });
+                    }
+                }
+            }
+        },
+        width: 320,
+        height: 240
+    });
+    
+    camera.start().catch(err => {
+        alert("相機開啟失敗，請確認是否已被其他程式佔用或未允許權限！");
+        stopWorkoutAndRelease();
+        showMenuScreen();
+    });
+}
+
+function stopWebcam() {
+    if (camera) {
+        console.log("Stopping Webcam stream...");
+        try {
+            camera.stop();
+        } catch (e) {
+            console.error("Error stopping camera:", e);
+        }
+        camera = null;
+    }
+}
+
+// --- 節拍事件同步與自動結束 (onGymBeat) ---
+window.currentStageIndex = 0;
+window.onGymBeat = function(beatCount, sectionCount) {
+    if (!isTVOn || currentAppState !== STATE_WORKOUT) return;
+    
+    currentBeat = beatCount;
+    currentSection = sectionCount;
+
+    const totalBeatsInStage = 16;
+    const currentProgressBeat = (sectionCount - 1) * 8 + beatCount;
+    
+    // 更新介面節拍數
+    workoutBeatProgress.textContent = `BEATS: ${currentProgressBeat}/16`;
+    ledStage.textContent = `${currentStageIndex}/8`;
+    
+    // 當前操節完成 (16 拍結束)
+    if (currentProgressBeat === totalBeatsInStage) {
+        // 1. 計算小節平均分數
+        let avgScore = 0;
+        if (stageScores.length > 0) {
+            avgScore = stageScores.reduce((a, b) => a + b, 0) / stageScores.length;
+        }
+        avgScore = Math.min(100, Math.round(avgScore));
+        
+        // 2. 播放換節哨音
+        window.gymSynth.playWhistle();
+
+        // 3. 停止音樂，銷毀相機與 AI 模型，徹底釋放手機記憶體
+        stopWorkoutAndRelease();
+
+        // 4. 上傳分節數據到後台資料庫
+        uploadStageResult(currentStageIndex, avgScore);
+
+        // 5. 提示使用者運動結果，並回到選單
+        setTimeout(() => {
+            alert(`【鍛鍊完成】\n操節：${STAGES[currentStageIndex].name}\n本次動作平均匹配率：${avgScore}%！\n\n數據已儲存，優化閾值已更新！`);
+            showMenuScreen();
+        }, 300);
+    }
+};
+
+function updateUIForStage() {
+    const stage = STAGES[currentStageIndex];
+    ledStage.textContent = `${currentStageIndex}/8`;
+    ledActionName.textContent = stage.name;
+    ledCamDir.textContent = stage.camera;
+    feedbackText.textContent = stage.desc;
+    feedbackSmiley.textContent = "😃";
+}
+
+// --- 姿態偵測回調 (繪圖與比對) ---
+function onPoseResults(results) {
+    if (!isTVOn || currentAppState !== STATE_WORKOUT) return;
+
+    ctxPlayer.save();
+    ctxPlayer.clearRect(0, 0, canvasPlayer.width, canvasPlayer.height);
+    
+    // 水平翻轉影像以利鏡像操作
+    ctxPlayer.translate(canvasPlayer.width, 0);
+    ctxPlayer.scale(-1, 1);
+    ctxPlayer.drawImage(results.image, 0, 0, canvasPlayer.width, canvasPlayer.height);
+    
+    if (results.poseLandmarks) {
+        ctxPlayer.lineWidth = 4;
+        ctxPlayer.strokeStyle = "#39ff14";
+        
+        // 偵測是否為行動裝置，行動端關閉陰影發光以節省 GPU RAM 與運算
+        const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+        if (!isMobile) {
+            ctxPlayer.shadowColor = "#39ff14";
+            ctxPlayer.shadowBlur = 10;
+        } else {
+            ctxPlayer.shadowBlur = 0;
+        }
+
+        drawSkeleton(ctxPlayer, results.poseLandmarks, canvasPlayer.width, canvasPlayer.height);
+        evaluatePose(results.poseLandmarks);
+    } else {
+        ledMatchPct.textContent = "0%";
+        ledMatchPct.className = "led-val text-red";
+        matchBar.style.width = "0%";
+        feedbackText.textContent = "找不到人影，請退後並確保全身在鏡頭內！";
+        feedbackSmiley.textContent = "🤔";
+        smoothedMatchPct = 0;
+    }
+    
+    ctxPlayer.restore();
+
+    // 繪製右側 AI 數位教練
+    drawCoachScreen();
+}
+
+// 繪製骨架的輔助函數
+function drawSkeleton(ctx, landmarks, w, h) {
+    const connections = [
+        [11, 12], [11, 23], [12, 24], [23, 24], 
+        [11, 13], [13, 15], [12, 14], [14, 16], 
+        [23, 25], [25, 27], [24, 26], [26, 28]  
+    ];
+
+    connections.forEach(([p1, p2]) => {
+        const pt1 = landmarks[p1];
+        const pt2 = landmarks[p2];
+        if (pt1 && pt2 && pt1.visibility > 0.5 && pt2.visibility > 0.5) {
+            ctx.beginPath();
+            ctx.moveTo(pt1.x * w, pt1.y * h);
+            ctx.lineTo(pt2.x * w, pt2.y * h);
+            ctx.stroke();
+        }
+    });
+
+    ctx.fillStyle = "#fff";
+    ctx.shadowBlur = 0;
+    const joints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+    joints.forEach(j => {
+        const pt = landmarks[j];
+        if (pt && pt.visibility > 0.5) {
+            ctx.beginPath();
+            ctx.arc(pt.x * w, pt.y * h, 5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    });
+}
+
+// --- 8式健康操動作判定邏輯 (Heuristic Evaluation) ---
+function evaluatePose(landmarks) {
+    const stage = STAGES[currentStageIndex];
+    
+    if (stage.camera === "側面") {
+        const ls = landmarks[11];
+        const rs = landmarks[12];
+        const shoulderGap = Math.abs(ls.x - rs.x);
+        if (shoulderGap > 0.15) {
+            poseWarning.classList.remove("hidden");
+            poseWarning.textContent = "請轉向側身！";
+            ledMatchPct.textContent = "0%";
+            ledMatchPct.className = "led-val text-red";
+            matchBar.style.width = "0%";
+            feedbackText.textContent = "此動作需檢測側身骨架，請往左/右轉身 90 度！";
+            smoothedMatchPct = 0;
+            return;
+        } else {
+            poseWarning.classList.add("hidden");
+        }
+    } else {
+        poseWarning.classList.add("hidden");
+    }
+
+    const lElbowAng = getAngle(landmarks[11], landmarks[13], landmarks[15]);
+    const rElbowAng = getAngle(landmarks[12], landmarks[14], landmarks[16]);
+    const lKneeAng = getAngle(landmarks[23], landmarks[25], landmarks[27]);
+    const rKneeAng = getAngle(landmarks[24], landmarks[26], landmarks[28]);
+    
+    let matchPct = 0;
+    let feedback = "";
+    let smiley = "😐";
+
+    const squatTol = configThresholds.squat_tolerance;
+    const armTol = configThresholds.arm_tolerance;
+    const twistTol = configThresholds.twist_tolerance;
+
+    switch (currentStageIndex) {
+        case 0: // 預備動作：兩手插腰
+            const lWristHipDist = Math.abs(landmarks[15].y - landmarks[23].y);
+            const rWristHipDist = Math.abs(landmarks[16].y - landmarks[24].y);
+            if (lWristHipDist < 0.15 && rWristHipDist < 0.15) {
+                matchPct = 100;
+                feedback = "完美預備！請跟隨音樂節拍...";
+                smiley = "😃";
+            } else {
+                matchPct = 30;
+                feedback = "請將雙手手腕插在腰際側邊！";
+                smiley = "😐";
+            }
+            break;
+
+        case 1: // 第一節：下肢運動 (全深蹲)
+            const squatAngle = Math.min(lKneeAng, rKneeAng);
+            if (squatAngle < 100 + squatTol) {
+                matchPct = 100;
+                feedback = "非常棒的全深蹲動作！核心收緊。";
+                smiley = "😎";
+            } else if (squatAngle < 135) {
+                matchPct = 60;
+                feedback = "蹲得不夠深喔，試著再蹲低一點！";
+                smiley = "😐";
+            } else {
+                matchPct = 10;
+                feedback = "請跟著節拍下蹲！背部打直。";
+                smiley = "😢";
+            }
+            break;
+
+        case 2: // 第二節：下肢運動 (半深蹲)
+            const halfSquatAngle = Math.min(lKneeAng, rKneeAng);
+            if (110 - squatTol <= halfSquatAngle && halfSquatAngle <= 140 + squatTol) {
+                matchPct = 100;
+                feedback = "標準的半深蹲動作！保持膝蓋穩定。";
+                smiley = "😃";
+            } else if (halfSquatAngle < 110) {
+                matchPct = 40;
+                feedback = "蹲得太低了，此小節為半深蹲！";
+                smiley = "😐";
+            } else {
+                matchPct = 15;
+                feedback = "請配合拍子微蹲，膝蓋朝前。";
+                smiley = "😢";
+            }
+            break;
+
+        case 3: // 第三節：上肢運動 (向上伸展)
+            const lWristSh = landmarks[15].y < landmarks[11].y;
+            const rWristSh = landmarks[16].y < landmarks[12].y;
+            const armStraight = (lElbowAng > 180 - armTol && rElbowAng > 180 - armTol);
+            if (lWristSh && rWristSh && armStraight) {
+                matchPct = 100;
+                feedback = "雙臂完全伸展！做得很好。";
+                smiley = "😎";
+            } else if (lWristSh && rWristSh) {
+                matchPct = 60;
+                feedback = "手高舉了，但請手肘盡量伸直！";
+                smiley = "😐";
+            } else {
+                matchPct = 20;
+                feedback = "請雙手高舉過頭！";
+                smiley = "😢";
+            }
+            break;
+
+        case 4: // 第四節：擴胸轉體 (胸腰旋轉)
+            const isRightTwist = (currentProgressBeat >= 3 && currentProgressBeat <= 6) || (currentProgressBeat >= 11 && currentProgressBeat <= 14);
+            
+            if (isRightTwist) {
+                const isLeftHandOnRightShoulder = Math.abs(landmarks[15].x - landmarks[12].x) < 0.15;
+                const isRightArmOpen = rElbowAng > 140;
+                if (isLeftHandOnRightShoulder && isRightArmOpen) {
+                    matchPct = 100;
+                    feedback = "轉體幅度非常標準！充分伸展胸背。";
+                    smiley = "😎";
+                } else {
+                    matchPct = 40;
+                    feedback = "一手搭對肩，另一手水平向後打開！";
+                    smiley = "😐";
+                }
+            } else {
+                const isHandsForward = landmarks[15].y < landmarks[11].y + 0.1 && landmarks[16].y < landmarks[12].y + 0.1;
+                if (isHandsForward) {
+                    matchPct = 100;
+                    feedback = "雙手平舉預備... 隨後轉體！";
+                    smiley = "😃";
+                } else {
+                    matchPct = 30;
+                    feedback = "雙腳開立與肩同寬，雙手平舉預備。";
+                    smiley = "😐";
+                }
+            }
+            break;
+
+        case 5: // 第五節：體側左右彎曲 (體側)
+            const shSlope = Math.abs(landmarks[11].y - landmarks[12].y) / Math.abs(landmarks[11].x - landmarks[12].x);
+            const targetSlope = Math.tan(15 * Math.PI / 180);
+            if (shSlope > targetSlope) {
+                matchPct = 100;
+                feedback = "側彎角度足夠！感受腰部拉伸。";
+                smiley = "😃";
+            } else {
+                matchPct = 30;
+                feedback = "請隨節奏將身體大幅度往左右側彎！";
+                smiley = "😐";
+            }
+            break;
+
+        case 6: // 第六節：前後彎體 (前後彎曲 - 需側身)
+            const isBendingForward = (currentProgressBeat >= 2 && currentProgressBeat <= 5) || (currentProgressBeat >= 10 && currentProgressBeat <= 13);
+            if (isBendingForward) {
+                const handBelowKnee = landmarks[15].y > landmarks[25].y && landmarks[16].y > landmarks[26].y;
+                if (handBelowKnee) {
+                    matchPct = 100;
+                    feedback = "非常棒的前彎！手指盡量觸地。";
+                    smiley = "😎";
+                } else {
+                    matchPct = 50;
+                    feedback = "再彎腰向下深探，盡量伸展後腿肌！";
+                    smiley = "😐";
+                }
+            } else {
+                const isLeaningBack = landmarks[11].x < landmarks[23].x - 0.05; // 假設面右
+                if (isLeaningBack) {
+                    matchPct = 100;
+                    feedback = "標準後仰！手插腰部。";
+                    smiley = "😃";
+                } else {
+                    matchPct = 40;
+                    feedback = "直立回到原位，或手插腰向後微仰！";
+                    smiley = "😐";
+                }
+            }
+            break;
+
+        case 7: // 第七節：四肢運動 (協調開合)
+            const shoulderW = Math.abs(landmarks[11].x - landmarks[12].x);
+            const ankleW = Math.abs(landmarks[27].x - landmarks[28].x);
+            const armOpen = landmarks[15].y < landmarks[11].y + 0.1 && landmarks[16].y < landmarks[12].y + 0.1;
+            if (ankleW > shoulderW * 1.5 && armOpen) {
+                matchPct = 100;
+                feedback = "開合跳躍協調完美！";
+                smiley = "😎";
+            } else {
+                matchPct = 45;
+                feedback = "踏步開展雙腳，手平平展開！";
+                smiley = "😐";
+            }
+            break;
+
+        case 8: // 第八節：整理運動 (深呼吸緩和)
+            const isHandsRaising = (currentProgressBeat % 8) < 4;
+            const handsUp = landmarks[15].y < landmarks[11].y;
+            const handsDown = landmarks[15].y > landmarks[11].y + 0.2;
+            if ((isHandsRaising && handsUp) || (!isHandsRaising && handsDown)) {
+                matchPct = 100;
+                feedback = "深吸氣... 緩緩吐氣，調整呼吸。";
+                smiley = "😃";
+            } else {
+                matchPct = 50;
+                feedback = "跟隨教練動作慢速上下揮臂深呼吸。";
+                smiley = "😐";
+            }
+            break;
+    }
+
+    matchPct = Math.round(matchPct);
+    stageScores.push(matchPct);
+
+    // 套用指數移動平均 (EMA) 來平滑化數值跳動
+    if (stageScores.length === 1) {
+        smoothedMatchPct = matchPct;
+    } else {
+        // 0.25 的權重可以在約 4 幀內平滑過渡，既保留即時性又大幅降低抖動
+        smoothedMatchPct = 0.25 * matchPct + 0.75 * smoothedMatchPct;
+    }
+    const displayScore = Math.round(smoothedMatchPct);
+
+    // 匹配進度條保持即時平滑更新 (維持畫面的流暢反應)
+    matchBar.style.width = `${displayScore}%`;
+
+    // 節流：控制評分文字與色彩每 500ms 僅更新一次，徹底解決字體閃爍難以辨識問題
+    const now = Date.now();
+    if (now - lastUiUpdateTime > 500) {
+        lastUiUpdateTime = now;
+        ledMatchPct.textContent = `${displayScore}%`;
+        
+        // 評分數字：紅色代表不及格(<60)，綠色代表及格(>=60)
+        if (displayScore < 60) {
+            ledMatchPct.className = "led-val text-red";
+        } else {
+            ledMatchPct.className = "led-val text-green";
+        }
+    }
+
+    feedbackText.textContent = feedback;
+    feedbackSmiley.textContent = smiley;
+
+    if (matchPct > 70) {
+        currentScore += Math.round(matchPct / 10);
+        ledScore.textContent = String(currentScore).padStart(6, '0');
+        
+        if (Math.random() < 0.05) {
+            window.gymSynth.playScoreSound();
+        }
+    }
+}
+
+// --- 繪製 AI 數位教練 (Coach Screen Animation) ---
+function drawCoachScreen() {
+    ctxCoach.save();
+    ctxCoach.clearRect(0, 0, canvasCoach.width, canvasCoach.height);
+    
+    // 1. 繪製復古背景網格
+    ctxCoach.strokeStyle = "#1a2420";
+    ctxCoach.lineWidth = 1;
+    const gridSpacing = 20;
+    for (let x = 0; x < canvasCoach.width; x += gridSpacing) {
+        ctxCoach.beginPath();
+        ctxCoach.moveTo(x, 0);
+        ctxCoach.lineTo(x, canvasCoach.height);
+        ctxCoach.stroke();
+    }
+    for (let y = 0; y < canvasCoach.height; y += gridSpacing) {
+        ctxCoach.beginPath();
+        ctxCoach.moveTo(0, y);
+        ctxCoach.lineTo(canvasCoach.width, y);
+        ctxCoach.stroke();
+    }
+
+    // 2. 依據當前小節與節拍，推算教練的骨架座標
+    const coachPose = getCoachKeyframes(currentStageIndex, currentBeat, currentSection);
+    
+    // 3. 繪製教練 (粉紅霓虹骨架)
+    ctxCoach.lineWidth = 6;
+    ctxCoach.strokeStyle = "#ff007f";
+    
+    // 行動端關閉教練陰影發光
+    const isMobileCoach = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+    if (!isMobileCoach) {
+        ctxCoach.shadowColor = "#ff007f";
+        ctxCoach.shadowBlur = 12;
+    } else {
+        ctxCoach.shadowBlur = 0;
+    }
+
+    const w = canvasCoach.width;
+    const h = canvasCoach.height;
+
+    const connections = [
+        ['shoulderL', 'shoulderR'], ['shoulderL', 'hipL'], ['shoulderR', 'hipR'], ['hipL', 'hipR'],
+        ['shoulderL', 'elbowL'], ['elbowL', 'wristL'], ['shoulderR', 'elbowR'], ['elbowR', 'wristR'],
+        ['hipL', 'kneeL'], ['kneeL', 'ankleL'], ['hipR', 'kneeR'], ['kneeR', 'ankleR']
+    ];
+
+    connections.forEach(([p1, p2]) => {
+        const pt1 = coachPose[p1];
+        const pt2 = coachPose[p2];
+        if (pt1 && pt2) {
+            ctxCoach.beginPath();
+            ctxCoach.moveTo(pt1.x * w, pt1.y * h);
+            ctxCoach.lineTo(pt2.x * w, pt2.y * h);
+            ctxCoach.stroke();
+        }
+    });
+
+    ctxCoach.fillStyle = "#fff";
+    ctxCoach.shadowBlur = 0;
+    Object.values(coachPose).forEach(pt => {
+        ctxCoach.beginPath();
+        ctxCoach.arc(pt.x * w, pt.y * h, 6, 0, 2 * Math.PI);
+        ctxCoach.fill();
+    });
+
+    ctxCoach.restore();
+}
+
+function getCoachKeyframes(stageIndex, beat, section) {
+    const cx = 0.5;
+    const cy = 0.45;
+    const t = ((section - 1) * 8 + beat) / 16; 
+
+    let pose = {
+        shoulderL: { x: cx - 0.08, y: cy - 0.15 },
+        shoulderR: { x: cx + 0.08, y: cy - 0.15 },
+        hipL: { x: cx - 0.06, y: cy + 0.1 },
+        hipR: { x: cx + 0.06, y: cy + 0.1 },
+        
+        elbowL: { x: cx - 0.12, y: cy - 0.05 },
+        wristL: { x: cx - 0.15, y: cy + 0.05 },
+        elbowR: { x: cx + 0.12, y: cy - 0.05 },
+        wristR: { x: cx + 0.15, y: cy + 0.05 },
+        
+        kneeL: { x: cx - 0.06, y: cy + 0.25 },
+        ankleL: { x: cx - 0.06, y: cy + 0.4 },
+        kneeR: { x: cx + 0.06, y: cy + 0.25 },
+        ankleR: { x: cx + 0.06, y: cy + 0.4 }
+    };
+
+    if (!isTVOn || currentAppState !== STATE_WORKOUT) {
+        return pose;
+    }
+
+    const sinScale = Math.sin(t * Math.PI * 4);
+    const sinPulse = Math.sin(t * Math.PI * 2);
+
+    switch (stageIndex) {
+        case 0: // 預備動作
+            pose.elbowL = { x: cx - 0.15, y: cy + 0.05 };
+            pose.wristL = { x: cx - 0.09, y: cy + 0.1 };
+            pose.elbowR = { x: cx + 0.15, y: cy + 0.05 };
+            pose.wristR = { x: cx + 0.09, y: cy + 0.1 };
+            const readyY = Math.abs(sinScale) * 0.015;
+            pose.hipL.y += readyY; pose.hipR.y += readyY;
+            pose.kneeL.y += readyY; pose.kneeR.y += readyY;
+            break;
+
+        case 1: // 全深蹲
+            pose = getSideViewBase(cx, cy);
+            const squatDepth = Math.max(0, sinScale) * 0.18;
+            pose.hip.y += squatDepth;
+            pose.knee.y += squatDepth * 0.5;
+            pose.elbow = { x: cx + 0.12, y: cy - 0.15 };
+            pose.wrist = { x: cx + 0.22, y: cy - 0.15 };
+            break;
+
+        case 2: // 半深蹲
+            pose = getSideViewBase(cx, cy);
+            const halfDepth = Math.max(0, sinScale) * 0.09;
+            pose.hip.y += halfDepth;
+            pose.knee.y += halfDepth * 0.5;
+            pose.elbow = { x: cx - 0.08, y: cy + 0.05 };
+            pose.wrist = { x: cx - 0.02, y: cy + 0.08 };
+            break;
+
+        case 3: // 上肢伸展
+            pose.elbowL = { x: cx - 0.08, y: cy - 0.25 };
+            pose.wristL = { x: cx - 0.08, y: cy - 0.38 };
+            pose.elbowR = { x: cx + 0.08, y: cy - 0.25 };
+            pose.wristR = { x: cx + 0.08, y: cy - 0.38 };
+            const stepY = Math.abs(sinScale) * 0.02;
+            pose.hipL.y += stepY; pose.hipR.y += stepY;
+            break;
+
+        case 4: // 擴胸轉體
+            const pBeat = (section - 1) * 8 + beat;
+            if (pBeat >= 3 && pBeat <= 6) {
+                pose.shoulderL.x = cx - 0.03;
+                pose.shoulderR.x = cx + 0.03;
+                pose.elbowL = { x: cx + 0.04, y: cy - 0.12 };
+                pose.wristL = { x: cx + 0.05, y: cy - 0.15 };
+                pose.elbowR = { x: cx + 0.18, y: cy - 0.15 };
+                pose.wristR = { x: cx + 0.28, y: cy - 0.15 };
+            } else if (pBeat >= 11 && pBeat <= 14) {
+                pose.shoulderL.x = cx - 0.03;
+                pose.shoulderR.x = cx + 0.03;
+                pose.elbowR = { x: cx - 0.04, y: cy - 0.12 };
+                pose.wristR = { x: cx - 0.05, y: cy - 0.15 };
+                pose.elbowL = { x: cx - 0.18, y: cy - 0.15 };
+                pose.wristL = { x: cx - 0.28, y: cy - 0.15 };
+            } else if ((pBeat >= 1 && pBeat <= 2) || (pBeat >= 9 && pBeat <= 10)) {
+                pose.elbowL = { x: cx - 0.12, y: cy - 0.15 };
+                pose.wristL = { x: cx - 0.22, y: cy - 0.15 };
+                pose.elbowR = { x: cx + 0.12, y: cy - 0.15 };
+                pose.wristR = { x: cx + 0.22, y: cy - 0.15 };
+            }
+            break;
+
+        case 5: // 體側左右彎曲
+            const bendOffset = sinPulse * 0.06;
+            pose.shoulderL.x += bendOffset; pose.shoulderR.x += bendOffset;
+            pose.shoulderL.y += bendOffset * 0.5; pose.shoulderR.y -= bendOffset * 0.5;
+            pose.elbowL = { x: cx - 0.06 + bendOffset, y: cy - 0.22 };
+            pose.wristL = { x: cx - 0.04 + bendOffset, y: cy - 0.35 };
+            pose.elbowR = { x: cx + 0.06 + bendOffset, y: cy - 0.22 };
+            pose.wristR = { x: cx + 0.04 + bendOffset, y: cy - 0.35 };
+            break;
+
+        case 6: // 前後彎體
+            pose = getSideViewBase(cx, cy);
+            const isForward = (beat >= 2 && beat <= 5);
+            if (isForward) {
+                pose.shoulder.y += 0.12;
+                pose.shoulder.x += 0.08;
+                pose.elbow = { x: cx + 0.1, y: cy + 0.15 };
+                pose.wrist = { x: cx + 0.12, y: cy + 0.35 };
+            } else {
+                pose.shoulder.x -= 0.06;
+                pose.elbow = { x: cx - 0.08, y: cy + 0.05 };
+                pose.wrist = { x: cx - 0.02, y: cy + 0.08 };
+            }
+            break;
+
+        case 7: // 四肢運動
+            const feetWide = 0.07 * (1 + Math.abs(sinScale));
+            pose.ankleL.x = cx - feetWide;
+            pose.ankleR.x = cx + feetWide;
+            pose.kneeL.x = cx - feetWide * 0.8;
+            pose.kneeR.x = cx + feetWide * 0.8;
+            pose.elbowL = { x: cx - 0.18, y: cy - 0.12 };
+            pose.wristL = { x: cx - 0.28, y: cy - 0.12 };
+            pose.elbowR = { x: cx + 0.18, y: cy - 0.12 };
+            pose.wristR = { x: cx + 0.28, y: cy - 0.12 };
+            break;
+
+        case 8: // 整理運動
+            const waveY = (sinPulse + 1) * 0.15;
+            pose.elbowL = { x: cx - 0.15, y: cy - 0.15 + waveY };
+            pose.wristL = { x: cx - 0.26, y: cy - 0.15 + waveY };
+            pose.elbowR = { x: cx + 0.15, y: cy - 0.15 + waveY };
+            pose.wristR = { x: cx + 0.26, y: cy - 0.15 + waveY };
+            break;
+    }
+
+    return pose;
+}
+
+function getSideViewBase(cx, cy) {
+    return {
+        shoulderL: { x: cx, y: cy - 0.15 },
+        shoulderR: { x: cx, y: cy - 0.15 },
+        shoulder: { x: cx, y: cy - 0.15 },
+        
+        hipL: { x: cx, y: cy + 0.1 },
+        hipR: { x: cx, y: cy + 0.1 },
+        hip: { x: cx, y: cy + 0.1 },
+        
+        elbowL: { x: cx - 0.03, y: cy - 0.05 },
+        wristL: { x: cx - 0.05, y: cy + 0.05 },
+        elbowR: { x: cx - 0.03, y: cy - 0.05 },
+        wristR: { x: cx - 0.05, y: cy + 0.05 },
+        elbow: { x: cx - 0.03, y: cy - 0.05 },
+        wrist: { x: cx - 0.05, y: cy + 0.05 },
+        
+        kneeL: { x: cx - 0.02, y: cy + 0.25 },
+        ankleL: { x: cx - 0.02, y: cy + 0.4 },
+        kneeR: { x: cx - 0.02, y: cy + 0.25 },
+        ankleR: { x: cx - 0.02, y: cy + 0.4 },
+        knee: { x: cx - 0.02, y: cy + 0.25 },
+        ankle: { x: cx - 0.02, y: cy + 0.4 }
+    };
+}
