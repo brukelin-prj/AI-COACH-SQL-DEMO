@@ -1,0 +1,1221 @@
+/* ================= 基礎復古配色與設計系統 ================= */
+:root {
+  --vintage-paper: #f4edd9;
+  --vintage-ink: #19385c;
+  --vintage-red: #a82a25;
+  --vintage-red-glow: rgba(168, 42, 37, 0.4);
+  --vintage-yellow: #d3962b;
+  --vintage-green: #2b6b3e;
+  --vintage-green-glow: rgba(43, 107, 62, 0.4);
+  --tv-bezel-bg: #ccc5b3;
+  --wood-dark: #371e11;
+  --wood-light: #6a3e20;
+  
+  --phosphor-green: #39ff14;
+  --phosphor-green-glow: rgba(57, 255, 20, 0.7);
+  
+  --font-serif: 'Noto Serif TC', serif;
+  --font-mono: 'VT323', monospace;
+  --font-sans: 'Outfit', sans-serif;
+  
+  --shadow-retro: 4px 4px 0px 0px var(--vintage-ink);
+  --shadow-retro-small: 2px 2px 0px 0px var(--vintage-ink);
+}
+
+/* 基本樣式重設 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--vintage-paper);
+  color: var(--vintage-ink);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* 復古手稿格線背景 */
+.vintage-grid-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-image: 
+    linear-gradient(rgba(25, 56, 92, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 56, 92, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+  z-index: -10;
+  pointer-events: none;
+}
+
+/* 主容器 */
+.app-container {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ================= 頂部復古標頭與郵票區 ================= */
+.retro-header {
+  border: 3px solid var(--vintage-ink);
+  background-color: #fcfaf2;
+  box-shadow: var(--shadow-retro);
+  border-radius: 8px;
+  padding: 16px 24px;
+}
+
+.header-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px dashed rgba(25, 56, 92, 0.3);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.title-area h1 {
+  font-family: var(--font-serif);
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title-area .sub-title {
+  font-size: 1.1rem;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  border: 1.5px solid var(--vintage-ink);
+  padding: 1px 8px;
+  border-radius: 4px;
+  background-color: var(--vintage-yellow);
+  color: #fff;
+  text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.15);
+}
+
+.retro-badge {
+  font-family: var(--font-serif);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--vintage-red);
+  border: 1px solid var(--vintage-red);
+  padding: 1px 6px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+}
+
+/* OSD指示燈 */
+.crt-indicator-light {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--vintage-ink);
+  display: inline-block;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+}
+
+.status-dot.red {
+  background-color: var(--vintage-red);
+  box-shadow: 0 0 8px var(--vintage-red-glow), inset 0 1px 2px rgba(0,0,0,0.3);
+  animation: alarm-blink 1s infinite alternate;
+}
+
+.status-dot.green {
+  background-color: #4caf50;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.5), inset 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* 8小節郵票進度看板 */
+.stamps-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .stamps-board {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+}
+
+.stamp-item {
+  position: relative;
+  background-color: #faf7eb;
+  border: 2px dashed rgba(25, 56, 92, 0.4);
+  padding: 10px 4px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.05);
+}
+
+/* 郵票齒孔邊框效果 */
+.stamp-perf {
+  position: absolute;
+  top: -4px; left: 0; right: 0;
+  height: 4px;
+  background-image: radial-gradient(circle, var(--vintage-paper) 2px, transparent 3px);
+  background-size: 8px 8px;
+}
+
+.stamp-item::after {
+  content: "";
+  position: absolute;
+  bottom: -4px; left: 0; right: 0;
+  height: 4px;
+  background-image: radial-gradient(circle, var(--vintage-paper) 2px, transparent 3px);
+  background-size: 8px 8px;
+}
+
+.stamp-num {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  color: var(--vintage-red);
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.stamp-name {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--vintage-ink);
+}
+
+.stamp-status {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: rgba(25, 56, 92, 0.08);
+  color: var(--vintage-ink);
+  font-weight: 600;
+}
+
+/* 郵票狀態 */
+.stamp-item:hover {
+  background-color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(25, 56, 92, 0.1);
+  border-color: var(--vintage-ink);
+}
+
+.stamp-item.active {
+  background-color: #fff;
+  border: 2.5px solid var(--vintage-ink);
+  box-shadow: 2px 2px 0px var(--vintage-yellow);
+}
+
+.stamp-item.active .stamp-name {
+  color: var(--vintage-red);
+}
+
+.stamp-item.completed {
+  border-color: var(--vintage-green);
+  background-color: rgba(43, 107, 62, 0.03);
+}
+
+.stamp-item.completed .stamp-status {
+  background-color: var(--vintage-green);
+  color: #fff;
+}
+
+/* 郵票合格大印戳 */
+.stamp-item.completed::before {
+  content: "優";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-20deg) scale(1.1);
+  width: 32px;
+  height: 32px;
+  border: 2px double var(--vintage-red);
+  border-radius: 50%;
+  color: var(--vintage-red);
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 28px;
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 5;
+  background-color: rgba(255, 255, 255, 0.7);
+}
+
+/* ================= 主板塊排版 ================= */
+.retro-main {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 1024px) {
+  .retro-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ================= 左側：CRT 電視機與控制 panel ================= */
+.screen-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 電視機實體木殼 */
+.crt-tv-cabinet {
+  display: flex;
+  background: linear-gradient(135deg, var(--wood-light) 0%, var(--wood-dark) 100%);
+  border: 4px solid var(--vintage-ink);
+  border-radius: 16px;
+  box-shadow: 0 15px 35px rgba(0,0,0,0.5), var(--shadow-retro);
+  padding: 16px;
+  gap: 16px;
+}
+
+@media (max-width: 650px) {
+  .crt-tv-cabinet {
+    flex-direction: column;
+  }
+}
+
+/* 電視機螢幕框 */
+.tv-screen-bezel {
+  flex: 1;
+  background-color: var(--tv-bezel-bg);
+  border: 4px solid var(--vintage-ink);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 圓角映像管電視螢幕 */
+.tv-screen-glass {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4/3;
+  overflow: hidden;
+  background-color: #0d120a;
+  border: 4px solid var(--vintage-ink);
+  border-radius: 32px / 24px;
+  box-shadow: inset 0 0 30px rgba(0,0,0,1);
+}
+
+#webcam, #output-canvas {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 26px / 18px;
+}
+
+#webcam {
+  z-index: 1;
+}
+
+#output-canvas {
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* 鏡像翻轉 */
+.mirror-y {
+  transform: scaleX(-1);
+}
+
+/* OSD 面板 */
+.tv-osd {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  z-index: 4;
+  color: var(--phosphor-green);
+  font-family: var(--font-mono);
+  font-size: 1.3rem;
+  text-shadow: 0 0 4px var(--phosphor-green-glow);
+  pointer-events: none;
+}
+
+.osd-rec-dot {
+  color: #ff3333;
+  text-shadow: 0 0 4px rgba(255,51,51,0.8);
+}
+
+.blinking {
+  animation: pulse-blink 1.5s infinite;
+}
+
+/* CRT 顯像管光影覆蓋 */
+.crt-scanlines {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+  background-size: 100% 4px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.crt-glare {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: radial-gradient(circle at 75% 25%, rgba(255, 255, 255, 0.12) 0%, transparent 55%);
+  z-index: 7;
+  pointer-events: none;
+}
+
+.crt-vignette {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  box-shadow: inset 0 0 60px rgba(0,0,0,0.85);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* 預熱干擾畫面 */
+.overlay {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background-color: #121510;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.5s ease;
+}
+
+.overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.crt-noise {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background-image: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.15) 0.5px, transparent 1px);
+  background-size: 3px 3px;
+  opacity: 0.35;
+  animation: noise-pan 0.1s infinite;
+  pointer-events: none;
+}
+
+.loading-content {
+  text-align: center;
+  z-index: 11;
+  color: var(--phosphor-green);
+  text-shadow: 0 0 6px var(--phosphor-green-glow);
+  font-family: var(--font-mono);
+}
+
+.test-pattern-bar {
+  width: 120px;
+  height: 16px;
+  margin: 0 auto 16px;
+  background: linear-gradient(90deg, #fff 0%, #ff0 14%, #0ff 28%, #0f0 42%, #f0f 56%, #f00 70%, #00f 84%, #000 100%);
+  border: 1px solid var(--phosphor-green);
+}
+
+.loading-content p {
+  font-size: 1.6rem;
+  letter-spacing: 1.5px;
+}
+
+.loading-content .sub-load-msg {
+  font-size: 1rem;
+  margin-top: 8px;
+  opacity: 0.7;
+}
+
+.blink {
+  animation: pulse-blink 1s infinite alternate;
+}
+
+/* 轉場蓋板 */
+.countdown-overlay {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background-color: rgba(13, 18, 10, 0.9);
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.countdown-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(1.1);
+}
+
+.countdown-card {
+  text-align: center;
+  color: var(--phosphor-green);
+  font-family: var(--font-serif);
+  text-shadow: 0 0 6px var(--phosphor-green-glow);
+}
+
+.countdown-card h3 {
+  font-size: 1.8rem;
+  margin-bottom: 4px;
+}
+
+.countdown-next-lbl {
+  font-size: 1.1rem;
+  opacity: 0.8;
+  font-family: var(--font-sans);
+  margin-bottom: 12px;
+}
+
+.countdown-num {
+  font-family: var(--font-mono);
+  font-size: 6rem;
+  line-height: 1;
+}
+
+/* ================= 電視控制旋鈕區 ================= */
+.tv-control-panel {
+  width: 170px;
+  background-color: #2b2724;
+  border: 4px solid var(--vintage-ink);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.speaker-grill {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.speaker-grill span {
+  display: block;
+  width: 100%;
+  height: 3px;
+  background-color: #12100f;
+  border-radius: 1px;
+}
+
+/* 運動員帳號選取 CSS */
+.athlete-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background-color: #1c1815;
+  border: 2px solid var(--vintage-ink);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.athlete-section label {
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  color: #d6d3d1;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#athlete-select {
+  background-color: #12100f;
+  color: #fff;
+  border: 1px solid #57534e;
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 0.85rem;
+  font-family: var(--font-serif);
+  font-weight: 800;
+  outline: none;
+  cursor: pointer;
+}
+
+.add-athlete-box {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+#new-athlete-input {
+  flex: 1;
+  background-color: #12100f;
+  color: #fff;
+  border: 1px solid #57534e;
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+}
+
+#btn-add-athlete {
+  background-color: var(--vintage-yellow);
+  color: #fff;
+  border: 1.5px solid var(--vintage-ink);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  font-family: var(--font-serif);
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 1px 1px 0px var(--vintage-ink);
+}
+
+#btn-add-athlete:active {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+
+.rotary-knobs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.knob-group {
+  text-align: center;
+}
+
+.knob-group label {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  color: #a8a29e;
+  margin-bottom: 4px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+/* 雙向切換開關 */
+.toggle-switch-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background-color: #12100f;
+  padding: 3px;
+  border-radius: 4px;
+}
+
+.switch-btn {
+  background: transparent;
+  border: none;
+  color: #78716c;
+  padding: 6px 4px;
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.switch-btn.active {
+  background-color: #57534e;
+  color: #fff;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+}
+
+/* 電源紅鈕 */
+.tv-power-btn {
+  width: 80px;
+  height: 36px;
+  margin: 0 auto;
+  border: 3px solid var(--vintage-ink);
+  border-radius: 4px;
+  background-color: var(--vintage-red);
+  color: #fff;
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 0px #5f1512;
+  transition: all 0.1s ease;
+}
+
+.tv-power-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0px #5f1512;
+}
+
+.tv-power-btn.btn-disabled {
+  background-color: #57534e;
+  box-shadow: 0 4px 0px #272522;
+  cursor: not-allowed;
+  color: #a8a29e;
+}
+
+.secondary-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid #3c3835;
+  padding-top: 12px;
+}
+
+.vintage-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  color: #d6d3d1;
+  font-weight: 800;
+  user-select: none;
+}
+
+.vintage-checkbox input {
+  display: none;
+}
+
+.checkbox-box {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #a8a29e;
+  background-color: #12100f;
+  border-radius: 2px;
+  position: relative;
+}
+
+.vintage-checkbox input:checked + .checkbox-box::after {
+  content: "";
+  position: absolute;
+  top: 1px; left: 1px; width: 8px; height: 8px;
+  background-color: var(--vintage-yellow);
+}
+
+.brand-badge {
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #57534e;
+  letter-spacing: 2px;
+}
+
+
+/* ================= 助教回饋建議面板 ================= */
+.retro-feedback-panel {
+  border: 3px solid var(--vintage-ink);
+  background-color: #fcfaf2;
+  box-shadow: var(--shadow-retro);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px dashed rgba(25, 56, 92, 0.2);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-header h3 {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+}
+
+.perfect-badge {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #fff;
+  background-color: var(--vintage-green);
+  padding: 2px 8px;
+  border-radius: 4px;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2);
+}
+
+.perfect-badge.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 56px;
+}
+
+.feedback-placeholder {
+  font-size: 0.85rem;
+  color: #78909c;
+  text-align: center;
+  padding: 12px 0;
+  font-style: italic;
+}
+
+.feedback-alert {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 800;
+  animation: pop-in 0.25s ease-out;
+  border-left: 4px solid transparent;
+}
+
+.feedback-alert.warning {
+  background-color: #faf0f0;
+  border-left-color: var(--vintage-red);
+  color: var(--vintage-red);
+}
+
+.feedback-alert.success {
+  background-color: #f1faf2;
+  border-left-color: var(--vintage-green);
+  color: var(--vintage-green);
+}
+
+
+/* ================= 右側：數字儀表板與海報指引 ================= */
+.dashboard-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 復古計分板 */
+.retro-scoreboard {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 16px;
+}
+
+.score-card {
+  border: 3px solid var(--vintage-ink);
+  background-color: #12100f;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.score-card.glow-blue {
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.15), var(--shadow-retro);
+}
+
+.score-card.glow-green {
+  box-shadow: 0 0 10px rgba(76, 175, 80, 0.15), var(--shadow-retro);
+}
+
+.card-title {
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  color: #a8a29e;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* VT323 仿輝光管/LED數字 */
+.led-num {
+  font-family: var(--font-mono);
+  font-size: 4.8rem;
+  line-height: 1;
+  margin: 6px 0;
+  font-weight: 400;
+  letter-spacing: -2px;
+}
+
+.text-glow-blue {
+  color: #60a5fa;
+  text-shadow: 0 0 12px rgba(96, 165, 250, 0.7);
+}
+
+.text-glow-green {
+  color: #4ade80;
+  text-shadow: 0 0 12px rgba(74, 222, 128, 0.7);
+}
+
+.card-status-line {
+  font-family: var(--font-serif);
+  font-size: 0.75rem;
+  color: #78716c;
+}
+
+.status-lbl {
+  font-weight: 800;
+  color: var(--vintage-yellow);
+}
+
+.led-bar-container {
+  width: 90%;
+  height: 8px;
+  background-color: #292524;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+  border: 1px solid #444;
+}
+
+.led-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #16a34a, #4ade80);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* 檢測指標看板 */
+.metrics-cabinet {
+  border: 3px solid var(--vintage-ink);
+  background-color: #fcfaf2;
+  box-shadow: var(--shadow-retro);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cabinet-header {
+  border-bottom: 2px dashed rgba(25, 56, 92, 0.2);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.cabinet-header h3 {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+}
+
+.metrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: rgba(25, 56, 92, 0.03);
+  border: 1px solid rgba(25, 56, 92, 0.1);
+  border-radius: 6px;
+}
+
+.metric-lbl {
+  font-size: 0.85rem;
+  color: #57606a;
+  font-weight: 600;
+  font-family: var(--font-serif);
+}
+
+.metric-val-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metric-val {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.metric-unit {
+  font-size: 0.75rem;
+  color: #78909c;
+}
+
+.metric-placeholder {
+  font-size: 0.85rem;
+  color: #78909c;
+  text-align: center;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+
+/* ================= 復古國民健康操海報動作指引 ================= */
+.retro-poster-card {
+  position: relative;
+  border: 3px solid var(--vintage-ink);
+  background-color: #f6ebd2;
+  box-shadow: var(--shadow-retro);
+  border-radius: 8px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+/* 復古郵票/防偽鋼印樣式 */
+.poster-stamp {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border: 1.5px dashed var(--vintage-red);
+  color: var(--vintage-red);
+  font-family: var(--font-serif);
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  transform: rotate(8deg);
+  opacity: 0.8;
+}
+
+.retro-poster-card h2 {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--vintage-red);
+  border-bottom: 2.5px solid var(--vintage-ink);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+  letter-spacing: 1px;
+}
+
+/* 火柴人示範圖 */
+.poster-illustration {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 0 auto 16px;
+  background-color: #e5dcc5;
+  border: 3px solid var(--vintage-ink);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.illustration-grid {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background-image: 
+    linear-gradient(rgba(25, 56, 92, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 56, 92, 0.04) 1px, transparent 1px);
+  background-size: 10px 10px;
+  pointer-events: none;
+}
+
+/* SVG火柴人樣式：仿印泥與手繪墨水質感 */
+#pose-svg {
+  z-index: 2;
+  filter: drop-shadow(1px 1px 0px rgba(25, 56, 92, 0.15));
+}
+
+#pose-svg line, #pose-svg path {
+  stroke: var(--vintage-ink);
+  stroke-width: 4px;
+  stroke-linecap: round;
+  fill: none;
+}
+
+#pose-svg circle {
+  fill: var(--vintage-ink);
+}
+
+/* SVG 裝飾細節線 */
+.svg-guide-line {
+  stroke: var(--vintage-red) !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 2, 2 !important;
+}
+
+.svg-arrow-arc {
+  stroke: var(--vintage-red) !important;
+  stroke-width: 2px !important;
+  fill: none !important;
+}
+
+.poster-instructions h4 {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 800;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  color: var(--vintage-ink);
+}
+
+.poster-instructions p {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #374151;
+  text-align: justify;
+}
+
+.poster-instructions ul {
+  padding-left: 18px;
+}
+
+.poster-instructions li {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #374151;
+  margin-bottom: 2px;
+}
+
+/* ================= 國民健康存摺計分板 CSS ================= */
+.history-scoreboard-section {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.history-card {
+  border: 3px solid var(--vintage-ink);
+  background-color: #fcfaf2;
+  box-shadow: var(--shadow-retro);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-bottom: 2.5px solid var(--vintage-ink);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+
+.history-header h2 {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--vintage-ink);
+}
+
+.athlete-totals {
+  display: flex;
+  gap: 16px;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+}
+
+.athlete-totals strong {
+  color: var(--vintage-red);
+  font-size: 1.1rem;
+}
+
+.history-table-container {
+  overflow-x: auto;
+  max-height: 350px;
+}
+
+.retro-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.retro-table th {
+  background-color: var(--vintage-ink);
+  color: #fff;
+  font-family: var(--font-serif);
+  font-weight: 800;
+  padding: 10px;
+  border: 1px solid var(--vintage-ink);
+}
+
+.retro-table td {
+  padding: 10px;
+  border: 1px solid rgba(25, 56, 92, 0.2);
+  color: var(--vintage-ink);
+}
+
+.retro-table tr:nth-child(even) {
+  background-color: rgba(25, 56, 92, 0.03);
+}
+
+.retro-table tr:hover {
+  background-color: rgba(211, 150, 43, 0.08);
+}
+
+.table-placeholder {
+  text-align: center;
+  font-style: italic;
+  color: #78909c;
+  padding: 24px !important;
+}
+
+.btn-delete-log {
+  background-color: var(--vintage-red);
+  color: #fff;
+  border: 1.5px solid var(--vintage-ink);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 1px 1px 0px var(--vintage-ink);
+}
+
+.btn-delete-log:active {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+
+.detail-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 1px 4px;
+  background-color: rgba(25, 56, 92, 0.08);
+  border: 1px solid rgba(25, 56, 92, 0.2);
+  border-radius: 3px;
+  margin-right: 4px;
+  margin-top: 2px;
+}
+
+/* ================= 動畫與特效 ================= */
+@keyframes alarm-blink {
+  0% { box-shadow: 0 0 2px var(--vintage-red-glow); opacity: 0.6; }
+  100% { box-shadow: 0 0 12px var(--vintage-red-glow); opacity: 1; }
+}
+
+@keyframes pulse-blink {
+  0% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+@keyframes noise-pan {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(-1px, 1px); }
+  100% { transform: translate(1px, -1px); }
+}
+
+@keyframes pop-in {
+  0% { transform: translateY(6px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
