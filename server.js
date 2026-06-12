@@ -8,6 +8,29 @@ const PORT = process.env.PORT || 3000;
 // Middleware for parsing JSON requests
 app.use(express.json());
 
+// Basic Authentication Middleware
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Access"');
+    return res.status(401).send('Authentication required');
+  }
+  const auth = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
+  const user = auth[0];
+  const pass = auth[1];
+  if (user === 'admin' && pass === 'admin888') {
+    next();
+  } else {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Access"');
+    return res.status(401).send('Authentication failed');
+  }
+};
+
+// Route to protect admin.html
+app.get('/admin.html', authMiddleware, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 // Serve static frontend files from 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -100,7 +123,7 @@ app.post('/api/workouts', async (req, res) => {
   }
 });
 
-app.delete('/api/workouts/:id', async (req, res) => {
+app.delete('/api/workouts/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await db.deleteWorkout(id);
@@ -129,7 +152,7 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // 4. Admin summary endpoint
-app.get('/api/admin/summary', async (req, res) => {
+app.get('/api/admin/summary', authMiddleware, async (req, res) => {
   try {
     const summary = await db.getAdminSummary();
     res.json(summary);
