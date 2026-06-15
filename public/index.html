@@ -4,33 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Fitness Coach - 智慧型健康操教練</title>
-  <!-- 全局錯誤攔截器，用於網頁偵錯 -->
-  <script>
-    window.addEventListener("error", (event) => {
-      const consoleDiv = document.getElementById("debug-console");
-      const listDiv = document.getElementById("debug-log-list");
-      if (consoleDiv && listDiv) {
-        consoleDiv.style.display = "block";
-        const item = document.createElement("div");
-        item.style.color = "#ff5555";
-        item.style.marginBottom = "6px";
-        item.textContent = `[JS Error] ${event.message} (${event.filename}:${event.lineno})`;
-        listDiv.appendChild(item);
-      }
-    });
-    window.addEventListener("unhandledrejection", (event) => {
-      const consoleDiv = document.getElementById("debug-console");
-      const listDiv = document.getElementById("debug-log-list");
-      if (consoleDiv && listDiv) {
-        consoleDiv.style.display = "block";
-        const item = document.createElement("div");
-        item.style.color = "#ff8888";
-        item.style.marginBottom = "6px";
-        item.textContent = `[Promise Reject] ${event.reason}`;
-        listDiv.appendChild(item);
-      }
-    });
-  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
@@ -38,6 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
+  <div class="vintage-grid-bg"></div>
   <div class="app-container">
     <!-- 頂部導覽列 -->
     <header class="main-header">
@@ -49,35 +23,39 @@
       <div class="mode-tabs">
         <button id="btn-twist" class="tab-btn active" data-mode="twist">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/>
           </svg>
           腰部扭轉動作 (Twisting)
         </button>
         <button id="btn-squat" class="tab-btn" data-mode="squat">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-3V3.5c0-.83-.67-1.5-1.5-1.5h-1c-.83 0-1.5.67-1.5 1.5V5H7c-1.1 0-2 .9-2 2v4H3.5c-.83 0-1.5.67-1.5 1.5v1c0 .83.67 1.5 1.5 1.5H5v4c0 1.1.9 2 2 2h3v1.5c0 .83.67 1.5 1.5 1.5h1c.83 0 1.5-.67 1.5-1.5V19h3c1.1 0 2-.9 2-2v-4h1.5c.83 0 1.5-.67 1.5-1.5v-1c0-.83-.67-1.5-1.5-1.5z"/>
+            <path d="M19 13H5v-2h14v2z"/>
           </svg>
           深蹲動作分析 (Squatting)
         </button>
         <button id="btn-sidebend" class="tab-btn" data-mode="sidebend">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <circle cx="14" cy="5" r="2"/>
-            <path d="M13.5 7.5c-1.2 0-2.2.8-2.5 1.9l-1 3.6c-.3 1 .4 2 1.4 2h1.1v6h2v-8.5l.8-3c.2-.7-.3-1.4-1-1.4z"/>
-            <path d="M16 4.5l-3.5 2 1 1.7 2.5-1.4V10h2V5.5c0-.6-.4-1-1-1z"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
           </svg>
           體側彎動作 (Side Bend)
         </button>
       </div>
-      <div class="user-profile-section" id="active-user-container">
+      <div class="user-profile-section">
         <div class="user-select-container">
           <span class="user-avatar">👤</span>
-          <span id="lbl-header-username" style="font-weight: 600;">載入中...</span>
-          <span id="lbl-header-profile" style="font-size: 0.75rem; color: var(--text-secondary); margin-left: 5px;"></span>
-          <button id="btn-logout" class="btn-icon-add" style="margin-left: 8px; display: flex; align-items: center; justify-content: center;" title="切換/登出使用者">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+          <select id="user-select" class="user-select">
+            <option value="" disabled selected>載入使用者...</option>
+          </select>
+          <button id="btn-show-add-user" class="btn-icon-add" title="新增使用者">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
             </svg>
           </button>
+        </div>
+        <div id="new-user-form" class="new-user-form hidden">
+          <input type="text" id="txt-new-username" placeholder="輸入姓名" maxlength="15">
+          <button id="btn-create-user" class="btn user-submit-btn">建立</button>
+          <button id="btn-cancel-user" class="btn user-cancel-btn">取消</button>
         </div>
       </div>
       <div class="status-indicator">
@@ -355,67 +333,9 @@
       </div>
     </div>
 
-    <!-- 偵錯主控台 (Debug Console) -->
-    <div id="debug-console" style="margin: 20px; padding: 15px; background: rgba(0,0,0,0.85); border: 2px solid #ff5555; border-radius: 12px; font-family: monospace; font-size: 12px; color: #ff5555; max-height: 250px; overflow-y: auto; z-index: 9999; display: none; position: relative;">
-      <h4 style="margin: 0 0 10px 0; color: #fff; display: flex; justify-content: space-between;">
-        <span>🐞 系統偵錯日誌 (Debug Logs)</span>
-        <button onclick="document.getElementById('debug-log-list').innerHTML = '';" style="background: none; border: none; color: #aaa; cursor: pointer; text-decoration: underline;">清除</button>
-      </h4>
-      <div id="debug-log-list"></div>
-    </div>
-
-  </div>
-
-  <!-- 登入與註冊覆蓋層 (Login/Registration Overlay) -->
-  <div id="login-overlay" class="login-overlay">
-    <div class="login-card">
-      <div class="login-header">
-        <span class="login-pulse-dot"></span>
-        <h2>AI FITNESS COACH</h2>
-        <p>請輸入使用者帳號以開始訓練</p>
-      </div>
-      
-      <!-- 登入視圖 -->
-      <div id="login-view" class="login-view">
-        <div class="form-group">
-          <label for="login-username">👤 使用者帳號 (限英數字)</label>
-          <input type="text" id="login-username" placeholder="例如: user123" maxlength="15" autocomplete="off">
-          <span class="error-msg hidden" id="login-error">請輸入正確的帳號格式</span>
-        </div>
-        <button id="btn-login-submit" class="btn primary-btn w-full">進入系統</button>
-      </div>
-
-      <!-- 首次使用註冊視圖 -->
-      <div id="register-view" class="login-view hidden">
-        <p class="register-tip">👋 偵測到您是首次使用，請填寫基本個人資料以建立健康紀錄：</p>
-        <div class="form-group">
-          <label>👤 使用者帳號</label>
-          <input type="text" id="register-username-display" disabled style="background: rgba(255,255,255,0.05); color: var(--text-secondary);">
-        </div>
-        <div class="form-group">
-          <label for="register-age">🎂 年齡 (歲)</label>
-          <input type="number" id="register-age" placeholder="例如: 25" min="1" max="120">
-        </div>
-        <div class="form-group">
-          <label for="register-height">📏 身高 (公分)</label>
-          <input type="number" id="register-height" placeholder="例如: 175" min="50" max="250" step="0.1">
-        </div>
-        <div class="form-group">
-          <label for="register-weight">⚖️ 體重 (公斤)</label>
-          <input type="number" id="register-weight" placeholder="例如: 65" min="10" max="300" step="0.1">
-        </div>
-        <span class="error-msg hidden" id="register-error">請填寫完整的資料</span>
-        <button id="btn-register-submit" class="btn success-btn w-full">完成註冊並開始做操</button>
-        <button id="btn-register-back" class="btn text-btn w-full">返回</button>
-      </div>
-      
-      <div class="login-footer">
-        <a href="admin.html" class="admin-entrance-link">⚙️ 後台管理系統入口</a>
-      </div>
-    </div>
   </div>
 
   <!-- 載入核心 logic 腳本 -->
-  <script src="app.js" type="module"></script>
+  <script src="app.js?v=1.0.3" type="module"></script>
 </body>
 </html>

@@ -316,7 +316,14 @@ function detectionLoop() {
   }
 
   const timestampMs = performance.now();
-  const result = poseLandmarker.detectForVideo(webcamElement, timestampMs);
+  let result = null;
+  if (webcamElement.readyState >= 2 && webcamElement.videoWidth > 0) {
+    try {
+      result = poseLandmarker.detectForVideo(webcamElement, timestampMs);
+    } catch (err) {
+      console.warn("MediaPipe detectForVideo error:", err);
+    }
+  }
   
   // 清除前一幀繪圖
   ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -330,7 +337,7 @@ function detectionLoop() {
   let currentFeedback = [];
   let currentScore = 100;
 
-  if (result.poseLandmarks && result.poseLandmarks.length > 0) {
+  if (result && result.poseLandmarks && result.poseLandmarks.length > 0) {
     const lm = result.poseLandmarks[0]; // 只抓取第一個人體骨架
     
     if (lm.length >= 29) {
@@ -348,10 +355,10 @@ function detectionLoop() {
         const ra = lm[RA_ID];
 
         // 檢查關鍵關節可見度
-        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID];
+        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID, LK_ID, RK_ID, LA_ID, RA_ID];
         let jointsVisible = true;
         for (const idx of requiredJoints) {
-          if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
+          if (!lm[idx] || (lm[idx].visibility !== undefined && lm[idx].visibility < 0.5)) {
             jointsVisible = false;
             break;
           }
@@ -517,10 +524,10 @@ function detectionLoop() {
           metricSquatSide.style.color = "var(--text-primary)";
 
           // 檢查關鍵關節可見度
-          const requiredJoints = [s_idx, h_idx, k_idx, a_idx];
+          const requiredJoints = [s_idx, h_idx, k_idx, a_idx, e_idx, w_idx];
           let jointsVisible = true;
           for (const idx of requiredJoints) {
-            if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
+            if (!lm[idx] || (lm[idx].visibility !== undefined && lm[idx].visibility < 0.5)) {
               jointsVisible = false;
               break;
             }
@@ -665,10 +672,10 @@ function detectionLoop() {
         const rw = lm[RW_ID];
 
         // 檢查關鍵關節可見度
-        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID, LA_ID, RA_ID];
+        const requiredJoints = [LS_ID, RS_ID, LH_ID, RH_ID, LA_ID, RA_ID, LW_ID, RW_ID];
         let jointsVisible = true;
         for (const idx of requiredJoints) {
-          if (lm[idx] && lm[idx].visibility !== undefined && lm[idx].visibility < 0.5) {
+          if (!lm[idx] || (lm[idx].visibility !== undefined && lm[idx].visibility < 0.5)) {
             jointsVisible = false;
             break;
           }
@@ -885,7 +892,7 @@ function updateDashboardUI() {
     feedbackList.innerHTML = `<div class="feedback-placeholder">未偵測到人體 skeleton，請站入鏡頭中央...</div>`;
   } else if (cachedState.feedback.length === 0) {
     feedbackList.innerHTML = `
-      <div class="feedback-alert" style="background-color: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); color: #a7f3d0;">
+      <div class="feedback-alert success" style="background-color: rgba(43, 107, 62, 0.08); border: 1.5px solid var(--vintage-green); color: var(--vintage-green);">
         姿態相當完美，請繼續保持！
       </div>
     `;
